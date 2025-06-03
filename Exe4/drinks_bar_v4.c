@@ -14,13 +14,16 @@
 #include <fcntl.h>
 #include <getopt.h>
 #include <signal.h>
-#include "drinks_bar.h"
+#include <errno.h>
+#include "drinks_bar_v4.h"
 
 #define MAX_CLIENTS 30
 #define BUFFER_SIZE 1024
 
-// Atom inventory
+// Atom inventory - מתחילים מ-0
 uint64_t hydrogen = 0, oxygen = 0, carbon = 0;
+
+int timeout_seconds = 60;  // ברירת מחדל ל-timeout, אפשר לשנות מהקונפיג
 
 /**
  * Prints the current atom inventory.
@@ -50,7 +53,18 @@ void handle_add_command(const char *cmd) {
 
 /**
  * Handles "DELIVER <MOLECULE> <AMOUNT>" commands from UDP clients.
- * Returns 1 if delivered, 0 if insufficient atoms, -1 invalid syntax, -2 unknown molecule.
+ *
+ * Supported molecules:
+ * - WATER = H2O
+ * - CARBON DIOXIDE = CO2
+ * - GLUCOSE = C6H12O6
+ * - ALCOHOL = C2H6O
+ *
+ * Returns:
+ *  -  1 on successful delivery
+ *  -  0 if there are insufficient atoms
+ *  - -1 for invalid command syntax
+ *  - -2 for unknown molecule name
  */
 int deliver_molecules(const char *cmd) {
     const char *prefix = "DELIVER ";
@@ -61,7 +75,6 @@ int deliver_molecules(const char *cmd) {
     strncpy(mol_full, args, sizeof(mol_full) - 1);
     mol_full[sizeof(mol_full) - 1] = '\0';
 
-    // Find last space to split molecule name from amount
     char *last_space = strrchr(mol_full, ' ');
     if (!last_space) return -1;
 
@@ -92,7 +105,6 @@ int deliver_molecules(const char *cmd) {
         return -2;
     }
 
-    // Check atom availability
     if (hydrogen >= need_H && oxygen >= need_O && carbon >= need_C) {
         hydrogen -= need_H;
         oxygen -= need_O;
@@ -105,7 +117,13 @@ int deliver_molecules(const char *cmd) {
 }
 
 /**
- * Handles console commands (stdin) to compute how many drinks can be made.
+ * Handles console commands (via stdin).
+ * Supported commands:
+ * - GEN SOFT DRINK
+ * - GEN VODKA
+ * - GEN CHAMPAGNE
+ *
+ * Each command prints how many drinks of the requested type can be produced.
  */
 void handle_console_command(const char *cmd) {
     int soft = 0, vodka = 0, champagne = 0;
@@ -118,7 +136,14 @@ void handle_console_command(const char *cmd) {
     } else if (strcasecmp(cmd, "GEN VODKA") == 0) {
         int water = hydrogen / 2 < oxygen ? hydrogen / 2 : oxygen;
         int alcohol = hydrogen / 6 < carbon / 2 ? hydrogen / 6 : carbon / 2;
-        int glucose = carbon / 6 < hydrogen / 12 && carbon / 6 < oxygen / 6 ? carbon / 6 : hydrogen / 12 < oxygen / 6 ? hydrogen / 12 : oxygen / 6;
+        int glucose;
+        {
+            int c6 = carbon / 6;
+            int h12 = hydrogen / 12;
+            int o6 = oxygen / 6;
+            glucose = c6 < h12 ? c6 : h12;
+            glucose = glucose < o6 ? glucose : o6;
+        }
         vodka = water;
         if (vodka > alcohol) vodka = alcohol;
         if (vodka > glucose) vodka = glucose;
@@ -126,7 +151,14 @@ void handle_console_command(const char *cmd) {
     } else if (strcasecmp(cmd, "GEN CHAMPAGNE") == 0) {
         int water = hydrogen / 2 < oxygen ? hydrogen / 2 : oxygen;
         int co2 = carbon < oxygen / 2 ? carbon : oxygen / 2;
-        int glucose = carbon / 6 < hydrogen / 12 && carbon / 6 < oxygen / 6 ? carbon / 6 : hydrogen / 12 < oxygen / 6 ? hydrogen / 12 : oxygen / 6;
+        int glucose;
+        {
+            int c6 = carbon / 6;
+            int h12 = hydrogen / 12;
+            int o6 = oxygen / 6;
+            glucose = c6 < h12 ? c6 : h12;
+            glucose = glucose < o6 ? glucose : o6;
+        }
         champagne = water;
         if (champagne > co2) champagne = co2;
         if (champagne > glucose) champagne = glucose;
@@ -139,31 +171,33 @@ void handle_console_command(const char *cmd) {
 }
 
 /**
- * Signal handler for SIGALRM to interrupt select() safely.
+ * Signal handler for SIGALRM.
+ * Used to interrupt select() calls to prevent blocking indefinitely.
  */
 void timeout_handler(int sig) {
-    // Do nothing, just interrupt select()
+    // Do nothing, just interrupt select
 }
 
 int main(int argc, char *argv[]) {
-    uint64_t oxygen = 0, carbon = 0, hydrogen = 0;
-    int timeout = 10;  // default timeout
-    int tcp_port = -1, udp_port = -1;
-
-    static struct option long_options[] = {
-        {"oxygen", required_argument, 0, 'o'},
-        {"carbon", required_argument, 0, 'c'},
-        {"hydrogen", required_argument, 0, 'h'},
-        {"timeout", required_argument, 0, 't'},
-        {"tcp-port", required_argument, 0, 'T'},
-        {"udp-port", required_argument, 0, 'U'},
+    int tcp_port = -1;
+    int udp_port = -1;
+    int opt;
+    struct option long_options[] = {
+        {"oxygen",    required_argument, NULL, 'o'},
+        {"carbon",    required_argument, NULL, 'c'},
+        {"hydrogen",  required_argument, NULL, 'h'},
+        {"timeout",   required_argument, NULL, 't'},
+        {"tcp-port",  required_argument, NULL, 'T'},
+        {"udp-port",  required_argument, NULL, 'U'},
         {0, 0, 0, 0}
     };
 
-    int opt;
-    int option_index = 0;
+    // אתחול אטומים ל-0 כבר ב-global, אבל אפשר להגדיר פה במידה ורוצים
+    hydrogen = 0;
+    oxygen = 0;
+    carbon = 0;
 
-    while ((opt = getopt_long(argc, argv, "o:c:h:t:T:U:", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "o:c:h:t:T:U:", long_options, NULL)) != -1) {
         switch (opt) {
             case 'o':
                 oxygen = strtoull(optarg, NULL, 10);
@@ -175,7 +209,11 @@ int main(int argc, char *argv[]) {
                 hydrogen = strtoull(optarg, NULL, 10);
                 break;
             case 't':
-                timeout = atoi(optarg);
+                timeout_seconds = atoi(optarg);
+                if (timeout_seconds <= 0) {
+                    fprintf(stderr, "Timeout must be positive integer\n");
+                    exit(EXIT_FAILURE);
+                }
                 break;
             case 'T':
                 tcp_port = atoi(optarg);
@@ -184,23 +222,26 @@ int main(int argc, char *argv[]) {
                 udp_port = atoi(optarg);
                 break;
             default:
-                fprintf(stderr, "Usage: %s -T <tcp-port> -U <udp-port> [-o oxygen] [-c carbon] [-h hydrogen] [-t timeout]\n", argv[0]);
+                fprintf(stderr,
+                        "Usage: %s -T <tcp-port> -U <udp-port> [-o oxygen] [-c carbon] [-h hydrogen] [-t timeout]\n",
+                        argv[0]);
                 exit(EXIT_FAILURE);
         }
     }
 
     if (tcp_port <= 0 || udp_port <= 0) {
-        fprintf(stderr, "Error: TCP and UDP ports must be specified and > 0\n");
+        fprintf(stderr,
+                "Error: both TCP (-T) and UDP (-U) ports are required and must be > 0\n");
+        fprintf(stderr,
+                "Usage: %s -T <tcp-port> -U <udp-port> [-o oxygen] [-c carbon] [-h hydrogen] [-t timeout]\n",
+                argv[0]);
         exit(EXIT_FAILURE);
     }
-
-    printf("Starting drinks_bar server with atoms: O=%lu, C=%lu, H=%lu\n", oxygen, carbon, hydrogen);
-    printf("TCP port: %d, UDP port: %d, Timeout: %d seconds\n", tcp_port, udp_port, timeout_seconds);
 
     signal(SIGALRM, timeout_handler);
 
     int tcp_fd, udp_fd, client_sockets[MAX_CLIENTS] = {0};
-    struct sockaddr_in tcp_addr, udp_addr, client_addr;
+    struct sockaddr_in server_addr, client_addr;
     socklen_t addrlen = sizeof(client_addr);
     fd_set readfds;
     char buffer[BUFFER_SIZE];
@@ -214,66 +255,61 @@ int main(int argc, char *argv[]) {
 
     int sock_opt = 1;
     setsockopt(tcp_fd, SOL_SOCKET, SO_REUSEADDR, &sock_opt, sizeof(sock_opt));
-    setsockopt(udp_fd, SOL_SOCKET, SO_REUSEADDR, &sock_opt, sizeof(sock_opt));
 
-    memset(&tcp_addr, 0, sizeof(tcp_addr));
-    tcp_addr.sin_family = AF_INET;
-    tcp_addr.sin_addr.s_addr = INADDR_ANY;
-    tcp_addr.sin_port = htons(tcp_port);
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = INADDR_ANY;
 
-    memset(&udp_addr, 0, sizeof(udp_addr));
-    udp_addr.sin_family = AF_INET;
-    udp_addr.sin_addr.s_addr = INADDR_ANY;
-    udp_addr.sin_port = htons(udp_port);
-
-    if (bind(tcp_fd, (struct sockaddr *)&tcp_addr, sizeof(tcp_addr)) < 0) {
-        perror("bind TCP");
+    // TCP bind and listen
+    server_addr.sin_port = htons(tcp_port);
+    if (bind(tcp_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        perror("bind tcp");
         exit(EXIT_FAILURE);
     }
-    if (bind(udp_fd, (struct sockaddr *)&udp_addr, sizeof(udp_addr)) < 0) {
-        perror("bind UDP");
-        exit(EXIT_FAILURE);
-    }
-
     if (listen(tcp_fd, 5) < 0) {
         perror("listen");
         exit(EXIT_FAILURE);
     }
 
+    // UDP bind
+    server_addr.sin_port = htons(udp_port);
+    if (bind(udp_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        perror("bind udp");
+        exit(EXIT_FAILURE);
+    }
+
     printf("drinks_bar server started on TCP port %d and UDP port %d\n", tcp_port, udp_port);
+    printf("Starting inventory => HYDROGEN: %lu, OXYGEN: %lu, CARBON: %lu\n", hydrogen, oxygen, carbon);
 
     while (1) {
-        if (timeout_seconds > 0) {
-            alarm(timeout_seconds);  // Setup timeout alarm
-        }
+        // Timeout עבור select עם alarm
+        alarm(timeout_seconds);
 
         FD_ZERO(&readfds);
         FD_SET(tcp_fd, &readfds);
         FD_SET(udp_fd, &readfds);
         FD_SET(STDIN_FILENO, &readfds);
 
-        int max_sd = STDIN_FILENO;
-        if (tcp_fd > max_sd) max_sd = tcp_fd;
+        int max_sd = STDIN_FILENO > tcp_fd ? STDIN_FILENO : tcp_fd;
         if (udp_fd > max_sd) max_sd = udp_fd;
 
         for (int i = 0; i < MAX_CLIENTS; i++) {
             int sd = client_sockets[i];
-            if (sd > 0) {
-                FD_SET(sd, &readfds);
-                if (sd > max_sd) max_sd = sd;
-            }
+            if (sd > 0) FD_SET(sd, &readfds);
+            if (sd > max_sd) max_sd = sd;
         }
 
         int activity = select(max_sd + 1, &readfds, NULL, NULL, NULL);
-        if (activity < 0) {
-            perror("select");
-            continue;
-        }
 
-        // Timeout expired, no activity, exit server
-        if (activity == 0) {
-            printf("Timeout expired, no activity. Server shutting down.\n");
-            break;
+        if (activity < 0) {
+            if (errno == EINTR) {
+                // Timeout expired - אין קלט בזמן - סוגרים
+                printf("Timeout expired - no input detected, shutting down server.\n");
+                break;
+            } else {
+                perror("select");
+                continue;
+            }
         }
 
         // Console command from stdin
@@ -290,11 +326,17 @@ int main(int argc, char *argv[]) {
             if (new_socket >= 0) {
                 printf("New TCP connection from %s:%d\n",
                        inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+                int added = 0;
                 for (int i = 0; i < MAX_CLIENTS; i++) {
                     if (client_sockets[i] == 0) {
                         client_sockets[i] = new_socket;
+                        added = 1;
                         break;
                     }
+                }
+                if (!added) {
+                    printf("Too many clients connected, rejecting new connection\n");
+                    close(new_socket);
                 }
             }
         }
