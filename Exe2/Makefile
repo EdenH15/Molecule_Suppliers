@@ -1,7 +1,8 @@
 all: molecule_supplier molecule_requester
 
-molecule_supplier: molecule_supplier.c
+molecule_supplier: molecule_supplier.c molecule_supplier.h
 	gcc -Wall -o molecule_supplier molecule_supplier.c
+
 
 molecule_requester: molecule_requester.c
 	gcc -Wall -o molecule_requester molecule_requester.c

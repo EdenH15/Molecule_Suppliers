@@ -1,3 +1,6 @@
+// drinks_bar.c
+// Created by eden on 6/3/25
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,18 +11,28 @@
 #include <sys/select.h>
 #include <arpa/inet.h>
 #include <strings.h>
+#include <fcntl.h>
+#include <getopt.h>
+#include <signal.h>
+#include "drinks_bar.h"
 
 #define MAX_CLIENTS 30
 #define BUFFER_SIZE 1024
 
+// Atom inventory
 uint64_t hydrogen = 0, oxygen = 0, carbon = 0;
 
-// Print current inventory of atoms
+/**
+ * Prints the current atom inventory.
+ */
 void print_inventory() {
     printf("Inventory => HYDROGEN: %lu, OXYGEN: %lu, CARBON: %lu\n", hydrogen, oxygen, carbon);
+    fflush(stdout);
 }
 
-// Parse and handle ADD command to increase atom counts
+/**
+ * Handles "ADD <ATOM> <AMOUNT>" commands from TCP clients.
+ */
 void handle_add_command(const char *cmd) {
     char type[16];
     uint64_t amount;
@@ -35,29 +48,32 @@ void handle_add_command(const char *cmd) {
     print_inventory();
 }
 
-// Process DELIVER command and try to deliver molecules
-// Returns 1 if successful, 0 if insufficient atoms, -1 if invalid, -2 if unknown molecule
+/**
+ * Handles "DELIVER <MOLECULE> <AMOUNT>" commands from UDP clients.
+ * Returns 1 if delivered, 0 if insufficient atoms, -1 invalid syntax, -2 unknown molecule.
+ */
 int deliver_molecules(const char *cmd) {
-    char mol1[16], mol2[16];
-    char mol[32];
-    int amount;
+    const char *prefix = "DELIVER ";
+    if (strncmp(cmd, prefix, strlen(prefix)) != 0) return -1;
 
-    // Try parsing two-word molecule name
-    if (sscanf(cmd, "DELIVER %15s %15s %d", mol1, mol2, &amount) == 3) {
-        snprintf(mol, sizeof(mol), "%s %s", mol1, mol2);
-    }
-    // Try parsing single-word molecule name
-    else if (sscanf(cmd, "DELIVER %15s %d", mol1, &amount) == 2) {
-        strncpy(mol, mol1, sizeof(mol));
-    } else {
-        return -1; // Failed to parse command
-    }
+    const char *args = cmd + strlen(prefix);
+    char mol_full[64];
+    strncpy(mol_full, args, sizeof(mol_full) - 1);
+    mol_full[sizeof(mol_full) - 1] = '\0';
 
-    if (amount <= 0) return -1; // Invalid amount
+    // Find last space to split molecule name from amount
+    char *last_space = strrchr(mol_full, ' ');
+    if (!last_space) return -1;
+
+    *last_space = '\0';
+    const char *mol = mol_full;
+    const char *amount_str = last_space + 1;
+
+    int amount = atoi(amount_str);
+    if (amount <= 0) return -1;
 
     uint64_t need_H = 0, need_O = 0, need_C = 0;
 
-    // Define molecule atom requirements
     if (strcasecmp(mol, "WATER") == 0) {
         need_H = 2 * amount;
         need_O = 1 * amount;
@@ -73,27 +89,70 @@ int deliver_molecules(const char *cmd) {
         need_H = 6 * amount;
         need_O = 1 * amount;
     } else {
-        return -2; // Unknown molecule
+        return -2;
     }
 
-    // Check if inventory suffices and deliver if possible
+    // Check atom availability
     if (hydrogen >= need_H && oxygen >= need_O && carbon >= need_C) {
         hydrogen -= need_H;
         oxygen -= need_O;
         carbon -= need_C;
         print_inventory();
-        return 1; // Delivered successfully
+        return 1;
     } else {
-        return 0; // Insufficient atoms
+        return 0;
     }
 }
 
-// Main server loop: handle TCP connections and UDP requests
-int main(int argc, char *argv[]) {
-    int opt;
-    int port = -1;
+/**
+ * Handles console commands (stdin) to compute how many drinks can be made.
+ */
+void handle_console_command(const char *cmd) {
+    int soft = 0, vodka = 0, champagne = 0;
 
-    // Parse command-line options for port number
+    if (strcasecmp(cmd, "GEN SOFT DRINK") == 0) {
+        int water = hydrogen / 2 < oxygen ? hydrogen / 2 : oxygen;
+        int co2 = carbon < oxygen / 2 ? carbon : oxygen / 2;
+        soft = water < co2 ? water : co2;
+        printf("SOFT DRINKS that can be made: %d\n", soft);
+    } else if (strcasecmp(cmd, "GEN VODKA") == 0) {
+        int water = hydrogen / 2 < oxygen ? hydrogen / 2 : oxygen;
+        int alcohol = hydrogen / 6 < carbon / 2 ? hydrogen / 6 : carbon / 2;
+        int glucose = carbon / 6 < hydrogen / 12 && carbon / 6 < oxygen / 6 ? carbon / 6 : hydrogen / 12 < oxygen / 6 ? hydrogen / 12 : oxygen / 6;
+        vodka = water;
+        if (vodka > alcohol) vodka = alcohol;
+        if (vodka > glucose) vodka = glucose;
+        printf("VODKA that can be made: %d\n", vodka);
+    } else if (strcasecmp(cmd, "GEN CHAMPAGNE") == 0) {
+        int water = hydrogen / 2 < oxygen ? hydrogen / 2 : oxygen;
+        int co2 = carbon < oxygen / 2 ? carbon : oxygen / 2;
+        int glucose = carbon / 6 < hydrogen / 12 && carbon / 6 < oxygen / 6 ? carbon / 6 : hydrogen / 12 < oxygen / 6 ? hydrogen / 12 : oxygen / 6;
+        champagne = water;
+        if (champagne > co2) champagne = co2;
+        if (champagne > glucose) champagne = glucose;
+        printf("CHAMPAGNE that can be made: %d\n", champagne);
+    } else {
+        printf("Unknown console command: %s\n", cmd);
+    }
+
+    fflush(stdout);
+}
+
+/**
+ * Signal handler for SIGALRM to interrupt select() safely.
+ */
+void timeout_handler(int sig) {
+    // Do nothing, just interrupt select()
+}
+
+/**
+ * Main function to start drinks_bar server.
+ */
+int main(int argc, char *argv[]) {
+    int port = -1;
+    int opt;
+
+    // Parse command line arguments
     while ((opt = getopt(argc, argv, "p:")) != -1) {
         switch (opt) {
             case 'p':
@@ -105,10 +164,12 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    if (port == -1) {
-        fprintf(stderr, "Port not specified\n");
+    if (port <= 0) {
+        fprintf(stderr, "Invalid or missing port\n");
         exit(EXIT_FAILURE);
     }
+
+    signal(SIGALRM, timeout_handler);
 
     int tcp_fd, udp_fd, client_sockets[MAX_CLIENTS] = {0};
     struct sockaddr_in server_addr, client_addr;
@@ -116,7 +177,6 @@ int main(int argc, char *argv[]) {
     fd_set readfds;
     char buffer[BUFFER_SIZE];
 
-    // Create TCP and UDP sockets
     tcp_fd = socket(AF_INET, SOCK_STREAM, 0);
     udp_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (tcp_fd < 0 || udp_fd < 0) {
@@ -124,75 +184,71 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    // Enable address reuse on TCP socket
-    int optval = 1;
-    setsockopt(tcp_fd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
+    int sock_opt = 1;
+    setsockopt(tcp_fd, SOL_SOCKET, SO_REUSEADDR, &sock_opt, sizeof(sock_opt));
 
-    // Prepare server address struct
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = INADDR_ANY;
     server_addr.sin_port = htons(port);
 
-    // Bind both sockets to the same port
     if (bind(tcp_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0 ||
         bind(udp_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
         perror("bind");
         exit(EXIT_FAILURE);
     }
 
-    // Listen for incoming TCP connections
     if (listen(tcp_fd, 5) < 0) {
         perror("listen");
         exit(EXIT_FAILURE);
     }
 
-    printf("molecule_supplier server started on port %d\n", port);
+    printf("drinks_bar server started on port %d\n", port);
 
     while (1) {
+        alarm(10); // Prevent select from blocking indefinitely
+
         FD_ZERO(&readfds);
         FD_SET(tcp_fd, &readfds);
         FD_SET(udp_fd, &readfds);
-        int max_sd = (tcp_fd > udp_fd) ? tcp_fd : udp_fd;
+        FD_SET(STDIN_FILENO, &readfds);
+        int max_sd = STDIN_FILENO > tcp_fd ? STDIN_FILENO : tcp_fd;
+        if (udp_fd > max_sd) max_sd = udp_fd;
 
-        // Add active client sockets to the read set
         for (int i = 0; i < MAX_CLIENTS; i++) {
             int sd = client_sockets[i];
             if (sd > 0) FD_SET(sd, &readfds);
             if (sd > max_sd) max_sd = sd;
         }
 
-        // Set 10-second timeout for select()
-        struct timeval timeout = {10, 0};
-
-        int activity = select(max_sd + 1, &readfds, NULL, NULL, &timeout);
-
-        if (activity < 0) {
-            perror("select");
-            continue;
-        } else if (activity == 0) {
-            // Timeout with no activity
-            printf("select timeout, no activity for 10 seconds\n");
+        if (select(max_sd + 1, &readfds, NULL, NULL, NULL) < 0) {
             continue;
         }
 
-        // Handle new TCP connections
+        // Console command from stdin
+        if (FD_ISSET(STDIN_FILENO, &readfds)) {
+            if (fgets(buffer, sizeof(buffer), stdin)) {
+                buffer[strcspn(buffer, "\n")] = '\0';
+                handle_console_command(buffer);
+            }
+        }
+
+        // New TCP client connection
         if (FD_ISSET(tcp_fd, &readfds)) {
             int new_socket = accept(tcp_fd, (struct sockaddr *)&client_addr, &addrlen);
-            if (new_socket < 0) {
-                perror("accept");
-                continue;
-            }
-            printf("New TCP connection from %s:%d\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
-            for (int i = 0; i < MAX_CLIENTS; i++) {
-                if (client_sockets[i] == 0) {
-                    client_sockets[i] = new_socket;
-                    break;
+            if (new_socket >= 0) {
+                printf("New TCP connection from %s:%d\n",
+                       inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+                for (int i = 0; i < MAX_CLIENTS; i++) {
+                    if (client_sockets[i] == 0) {
+                        client_sockets[i] = new_socket;
+                        break;
+                    }
                 }
             }
         }
 
-        // Handle data from connected TCP clients
+        // Read from TCP clients
         for (int i = 0; i < MAX_CLIENTS; i++) {
             int sd = client_sockets[i];
             if (sd > 0 && FD_ISSET(sd, &readfds)) {
@@ -208,7 +264,7 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        // Handle incoming UDP requests
+        // Handle UDP request
         if (FD_ISSET(udp_fd, &readfds)) {
             int len = recvfrom(udp_fd, buffer, BUFFER_SIZE - 1, 0,
                                (struct sockaddr *)&client_addr, &addrlen);
