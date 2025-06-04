@@ -12,7 +12,7 @@ extern char *save_file_path;
 
 
 void print_inventory();
-
+void cleanup_and_exit(int sig);
 
 void alarm_handler(int sig);
 

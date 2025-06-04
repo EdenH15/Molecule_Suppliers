@@ -24,6 +24,8 @@ int tcp_socket = -1, udp_socket = -1;
 int timed_out = 0;
 int timeout_seconds = 0;
 char *save_file_path = NULL;
+int server_fd;
+int client_sockets[MAX_CLIENTS] = {0};
 
 /**
  * Prints the current inventory to stdout.
@@ -31,6 +33,17 @@ char *save_file_path = NULL;
 void print_inventory() {
     printf("Inventory => CARBON: %llu, OXYGEN: %llu, HYDROGEN: %llu\n",
            inventory.carbon, inventory.oxygen, inventory.hydrogen);
+}
+
+void cleanup_and_exit(int sig) {
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (client_sockets[i] > 0)
+            close(client_sockets[i]);
+    }
+    if (server_fd > 0)
+        close(server_fd);
+    printf("\nServer exiting cleanly.\n");
+    exit(0);
 }
 
 /**
@@ -511,6 +524,7 @@ int main(int argc, char *argv[]) {
 
     fd_set read_fds;
     int max_fd = tcp_socket > udp_socket ? tcp_socket : udp_socket;
+    signal(SIGINT, cleanup_and_exit);
 
     printf("Server listening on TCP port %u and UDP port %u\n", tcp_port, udp_port);
 

@@ -1,0 +1,973 @@
+        -:    0:Source:drinks_bar_v6.c
+        -:    0:Graph:drinks_bar_v6.gcno
+        -:    0:Data:drinks_bar_v6.gcda
+        -:    0:Runs:1
+        -:    1:#include <stdio.h>
+        -:    2:#include <stdlib.h>
+        -:    3:#include <string.h>
+        -:    4:#include <unistd.h>
+        -:    5:#include <fcntl.h>      // For flock
+        -:    6:#include <sys/file.h>   // For flock
+        -:    7:#include <sys/socket.h>
+        -:    8:#include <netinet/in.h>
+        -:    9:#include <arpa/inet.h>
+        -:   10:#include <errno.h>
+        -:   11:#include <signal.h>
+        -:   12:#include "drinks_bar_v6.h"
+        -:   13:#include <sys/select.h>
+        -:   14:#include <bits/getopt_core.h>
+        -:   15:
+        -:   16:#define MAX_CLIENTS 10
+        -:   17:#define BUFFER_SIZE 1024
+        -:   18:
+        -:   19:struct Inventory {
+        -:   20:    unsigned long long carbon;
+        -:   21:    unsigned long long oxygen;
+        -:   22:    unsigned long long hydrogen;
+        -:   23:} inventory = {0, 0, 0};
+        -:   24:
+        -:   25:int tcp_socket = -1, udp_socket = -1;
+        -:   26:int timed_out = 0;
+        -:   27:int timeout_seconds = 0;
+        -:   28:char *save_file_path = NULL;
+        -:   29:int server_fd;
+        -:   30:int client_sockets[MAX_CLIENTS] = {0};
+        -:   31:
+        -:   32:/**
+        -:   33: * Prints the current inventory to stdout.
+        -:   34: */
+function print_inventory called 6 returned 100% blocks executed 100%
+        6:   35:void print_inventory() {
+        6:   36:    printf("Inventory => CARBON: %llu, OXYGEN: %llu, HYDROGEN: %llu\n",
+call    0 returned 6
+        -:   37:           inventory.carbon, inventory.oxygen, inventory.hydrogen);
+        6:   38:}
+        -:   39:
+function cleanup_and_exit called 1 returned 0% blocks executed 78%
+        1:   40:void cleanup_and_exit(int sig) {
+       11:   41:    for (int i = 0; i < MAX_CLIENTS; i++) {
+branch  0 taken 10
+branch  1 taken 1 (fallthrough)
+       10:   42:        if (client_sockets[i] > 0)
+branch  0 taken 0 (fallthrough)
+branch  1 taken 10
+    #####:   43:            close(client_sockets[i]);
+call    0 never executed
+        -:   44:    }
+        1:   45:    if (server_fd > 0)
+branch  0 taken 0 (fallthrough)
+branch  1 taken 1
+    #####:   46:        close(server_fd);
+call    0 never executed
+        1:   47:    printf("\nServer exiting cleanly.\n");
+call    0 returned 1
+        1:   48:    exit(0);
+        -:   49:}
+        -:   50:
+        -:   51:/**
+        -:   52: * Alarm signal handler. Sets the timed_out flag.
+        -:   53: */
+function alarm_handler called 0 returned 0% blocks executed 0%
+    #####:   54:void alarm_handler(int sig) {
+        -:   55:    (void)sig;
+    #####:   56:    timed_out = 1;
+    #####:   57:}
+        -:   58:
+        -:   59:/**
+        -:   60: * Loads the inventory from a file using a shared (read) lock.
+        -:   61: * @param filename Path to the file containing the inventory.
+        -:   62: * @return 0 on success, -1 on failure.
+        -:   63: */
+function load_inventory_from_file called 0 returned 0% blocks executed 0%
+    #####:   64:int load_inventory_from_file(const char *filename) {
+    #####:   65:    int fd = open(filename, O_RDONLY);
+call    0 never executed
+    #####:   66:    if (fd < 0) return -1;
+branch  0 never executed (fallthrough)
+branch  1 never executed
+        -:   67:
+        -:   68:    // Acquire shared lock for reading
+    #####:   69:    if (flock(fd, LOCK_SH) != 0) {
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed
+    #####:   70:        close(fd);
+call    0 never executed
+    #####:   71:        return -1;
+        -:   72:    }
+        -:   73:
+    #####:   74:    FILE *f = fdopen(fd, "r");
+call    0 never executed
+    #####:   75:    if (!f) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+    #####:   76:        flock(fd, LOCK_UN);
+call    0 never executed
+    #####:   77:        close(fd);
+call    0 never executed
+    #####:   78:        return -1;
+        -:   79:    }
+        -:   80:
+        -:   81:    unsigned long long c, o, h;
+    #####:   82:    if (fscanf(f, "%llu %llu %llu", &c, &o, &h) != 3) {
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed
+    #####:   83:        flock(fd, LOCK_UN);
+call    0 never executed
+    #####:   84:        fclose(f);
+call    0 never executed
+    #####:   85:        return -1;
+        -:   86:    }
+        -:   87:
+    #####:   88:    inventory.carbon = c;
+    #####:   89:    inventory.oxygen = o;
+    #####:   90:    inventory.hydrogen = h;
+        -:   91:
+    #####:   92:    flock(fd, LOCK_UN);
+call    0 never executed
+    #####:   93:    fclose(f);
+call    0 never executed
+    #####:   94:    return 0;
+        -:   95:}
+        -:   96:
+        -:   97:/**
+        -:   98: * Saves the current inventory to a file using an exclusive (write) lock.
+        -:   99: * @param filename Path to the file where inventory will be saved.
+        -:  100: * @return 0 on success, -1 on failure.
+        -:  101: */
+function save_inventory_to_file called 1 returned 100% blocks executed 61%
+        1:  102:int save_inventory_to_file(const char *filename) {
+        1:  103:    int fd = open(filename, O_WRONLY | O_CREAT, 0666);
+call    0 returned 1
+       1*:  104:    if (fd < 0) return -1;
+branch  0 taken 0 (fallthrough)
+branch  1 taken 1
+        -:  105:
+        -:  106:    // Acquire exclusive lock for writing
+        1:  107:    if (flock(fd, LOCK_EX) != 0) {
+call    0 returned 1
+branch  1 taken 0 (fallthrough)
+branch  2 taken 1
+    #####:  108:        close(fd);
+call    0 never executed
+    #####:  109:        return -1;
+        -:  110:    }
+        -:  111:
+        -:  112:    // Truncate file before writing new data
+        1:  113:    if (ftruncate(fd, 0) != 0) {
+call    0 returned 1
+branch  1 taken 0 (fallthrough)
+branch  2 taken 1
+    #####:  114:        flock(fd, LOCK_UN);
+call    0 never executed
+    #####:  115:        close(fd);
+call    0 never executed
+    #####:  116:        return -1;
+        -:  117:    }
+        -:  118:
+        1:  119:    FILE *f = fdopen(fd, "w");
+call    0 returned 1
+        1:  120:    if (!f) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 1
+    #####:  121:        flock(fd, LOCK_UN);
+call    0 never executed
+    #####:  122:        close(fd);
+call    0 never executed
+    #####:  123:        return -1;
+        -:  124:    }
+        -:  125:
+        1:  126:    fprintf(f, "%llu %llu %llu\n", inventory.carbon, inventory.oxygen, inventory.hydrogen);
+call    0 returned 1
+        1:  127:    fflush(f); // Ensure data is written to disk
+call    0 returned 1
+        -:  128:
+        1:  129:    flock(fd, LOCK_UN);
+call    0 returned 1
+        1:  130:    fclose(f);
+call    0 returned 1
+        1:  131:    return 0;
+        -:  132:}
+        -:  133:
+        -:  134:/**
+        -:  135: * Processes a TCP command string of the form "ADD <ATOM> <NUMBER>".
+        -:  136: * Updates the inventory accordingly.
+        -:  137: * @param cmd The command received from the client.
+        -:  138: * @param response The response buffer to write result into.
+        -:  139: * @param resp_len The maximum length of the response buffer.
+        -:  140: * @return 0 on success, -1 on error.
+        -:  141: */
+function process_tcp_command called 6 returned 100% blocks executed 56%
+        6:  142:int process_tcp_command(const char *cmd, char *response, size_t resp_len) {
+        -:  143:    char action[16];
+        -:  144:    char atom[16];
+        6:  145:    unsigned long long number = 0;
+        -:  146:
+        6:  147:    int n = sscanf(cmd, "%15s %15s %llu", action, atom, &number);
+        6:  148:    if (n != 3) {
+branch  0 taken 3 (fallthrough)
+branch  1 taken 3
+        3:  149:        snprintf(response, resp_len, "ERROR: invalid command format\n");
+        3:  150:        return -1;
+        -:  151:    }
+        -:  152:
+        3:  153:    if (strcmp(action, "ADD") != 0) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 3
+    #####:  154:        snprintf(response, resp_len, "ERROR: unknown action '%s'\n", action);
+    #####:  155:        return -1;
+        -:  156:    }
+        3:  157:    if (number == 0) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 3
+    #####:  158:        snprintf(response, resp_len, "ERROR: invalid number\n");
+    #####:  159:        return -1;
+        -:  160:    }
+        -:  161:
+        -:  162:    // Ensure inventory consistency between concurrent servers using locking
+        3:  163:    if (save_file_path) {
+branch  0 taken 3 (fallthrough)
+branch  1 taken 0
+        -:  164:        // Acquire exclusive lock for reading and updating the inventory file
+        3:  165:        int fd = open(save_file_path, O_RDWR);
+call    0 returned 3
+        3:  166:        if (fd < 0) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 3
+    #####:  167:            snprintf(response, resp_len, "ERROR: could not open inventory file\n");
+    #####:  168:            return -1;
+        -:  169:        }
+        3:  170:        if (flock(fd, LOCK_EX) != 0) {
+call    0 returned 3
+branch  1 taken 0 (fallthrough)
+branch  2 taken 3
+    #####:  171:            close(fd);
+call    0 never executed
+    #####:  172:            snprintf(response, resp_len, "ERROR: could not lock inventory file\n");
+    #####:  173:            return -1;
+        -:  174:        }
+        -:  175:
+        3:  176:        FILE *f = fdopen(fd, "r+");
+call    0 returned 3
+        3:  177:        if (!f) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 3
+    #####:  178:            flock(fd, LOCK_UN);
+call    0 never executed
+    #####:  179:            close(fd);
+call    0 never executed
+    #####:  180:            snprintf(response, resp_len, "ERROR: could not open inventory file stream\n");
+    #####:  181:            return -1;
+        -:  182:        }
+        -:  183:
+        3:  184:        rewind(f);
+call    0 returned 3
+        -:  185:        unsigned long long c, o, h;
+        3:  186:        if (fscanf(f, "%llu %llu %llu", &c, &o, &h) != 3) {
+call    0 returned 3
+branch  1 taken 0 (fallthrough)
+branch  2 taken 3
+    #####:  187:            flock(fd, LOCK_UN);
+call    0 never executed
+    #####:  188:            fclose(f);
+call    0 never executed
+    #####:  189:            snprintf(response, resp_len, "ERROR: corrupted inventory file\n");
+    #####:  190:            return -1;
+        -:  191:        }
+        -:  192:
+        3:  193:        inventory.carbon = c;
+        3:  194:        inventory.oxygen = o;
+        3:  195:        inventory.hydrogen = h;
+        -:  196:
+        -:  197:        // Update inventory based on atom type
+        3:  198:        if (strcmp(atom, "CARBON") == 0) {
+branch  0 taken 1 (fallthrough)
+branch  1 taken 2
+        1:  199:            inventory.carbon += number;
+        2:  200:        } else if (strcmp(atom, "OXYGEN") == 0) {
+branch  0 taken 1 (fallthrough)
+branch  1 taken 1
+        1:  201:            inventory.oxygen += number;
+        1:  202:        } else if (strcmp(atom, "HYDROGEN") == 0) {
+branch  0 taken 1 (fallthrough)
+branch  1 taken 0
+        1:  203:            inventory.hydrogen += number;
+        -:  204:        } else {
+    #####:  205:            flock(fd, LOCK_UN);
+call    0 never executed
+    #####:  206:            fclose(f);
+call    0 never executed
+    #####:  207:            snprintf(response, resp_len, "ERROR: unknown atom type '%s'\n", atom);
+    #####:  208:            return -1;
+        -:  209:        }
+        -:  210:
+        -:  211:        // Overwrite updated inventory to file
+        3:  212:        rewind(f);
+call    0 returned 3
+        3:  213:        if (ftruncate(fd, 0) != 0) {
+call    0 returned 3
+branch  1 taken 0 (fallthrough)
+branch  2 taken 3
+    #####:  214:            flock(fd, LOCK_UN);
+call    0 never executed
+    #####:  215:            fclose(f);
+call    0 never executed
+    #####:  216:            snprintf(response, resp_len, "ERROR: failed truncating inventory file\n");
+    #####:  217:            return -1;
+        -:  218:        }
+        -:  219:
+        3:  220:        fprintf(f, "%llu %llu %llu\n", inventory.carbon, inventory.oxygen, inventory.hydrogen);
+call    0 returned 3
+        3:  221:        fflush(f);
+call    0 returned 3
+        -:  222:
+        3:  223:        flock(fd, LOCK_UN);
+call    0 returned 3
+        3:  224:        fclose(f);
+call    0 returned 3
+        -:  225:    } else {
+        -:  226:        // Update in-memory inventory if no file is used
+    #####:  227:        if (strcmp(atom, "CARBON") == 0) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+    #####:  228:            inventory.carbon += number;
+    #####:  229:        } else if (strcmp(atom, "OXYGEN") == 0) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+    #####:  230:            inventory.oxygen += number;
+    #####:  231:        } else if (strcmp(atom, "HYDROGEN") == 0) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+    #####:  232:            inventory.hydrogen += number;
+        -:  233:        } else {
+    #####:  234:            snprintf(response, resp_len, "ERROR: unknown atom type '%s'\n", atom);
+    #####:  235:            return -1;
+        -:  236:        }
+        -:  237:    }
+        -:  238:
+        3:  239:    print_inventory();
+call    0 returned 3
+        3:  240:    snprintf(response, resp_len, "OK: Added atoms. Current inventory: C:%llu O:%llu H:%llu\n",
+        -:  241:             inventory.carbon, inventory.oxygen, inventory.hydrogen);
+        3:  242:    return 0;
+        -:  243:}
+        -:  244:
+        -:  245:
+        -:  246:/**
+        -:  247: * Processes a UDP command that requests molecule delivery.
+        -:  248: * Supports known molecules like WATER, CO2, GLUCOSE, etc.
+        -:  249: * Updates the inventory after checking if there are enough atoms.
+        -:  250: *
+        -:  251: * @param cmd       The incoming command string.
+        -:  252: * @param response  Output buffer for the server's response.
+        -:  253: * @param resp_len  Maximum length of the response buffer.
+        -:  254: * @return 0 on success, -1 on error with a message in response.
+        -:  255: */
+function process_udp_command called 7 returned 100% blocks executed 69%
+        7:  256:int process_udp_command(const char *cmd, char *response, size_t resp_len) {
+        -:  257:    char action[16];
+        -:  258:    char molecule[32];
+        7:  259:    unsigned long long number = 0;
+        -:  260:
+        7:  261:    int n = sscanf(cmd, "%15s %31s %llu", action, molecule, &number);
+        7:  262:    if (n != 3) {
+branch  0 taken 2 (fallthrough)
+branch  1 taken 5
+        2:  263:        snprintf(response, resp_len, "ERROR: invalid command format\n");
+        2:  264:        return -1;
+        -:  265:    }
+        -:  266:
+        5:  267:    if (strcmp(action, "DELIVER") != 0) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 5
+    #####:  268:        snprintf(response, resp_len, "ERROR: unknown action '%s'\n", action);
+    #####:  269:        return -1;
+        -:  270:    }
+        5:  271:    if (number == 0) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 5
+    #####:  272:        snprintf(response, resp_len, "ERROR: invalid number\n");
+    #####:  273:        return -1;
+        -:  274:    }
+        -:  275:
+        5:  276:    unsigned long long c_req=0, o_req=0, h_req=0;
+        -:  277:
+        -:  278:    // Determine atom requirements per molecule
+        5:  279:    if (strcmp(molecule, "WATER") == 0) {
+branch  0 taken 2 (fallthrough)
+branch  1 taken 3
+        2:  280:        h_req = 2 * number;
+        2:  281:        o_req = 1 * number;
+        3:  282:    } else if (strcmp(molecule, "CARBON") == 0 || strcmp(molecule, "CARBONDIOXIDE") == 0 ||
+branch  0 taken 3 (fallthrough)
+branch  1 taken 0
+branch  2 taken 3 (fallthrough)
+branch  3 taken 0
+        3:  283:               strcmp(molecule, "CARBON_DIOXIDE") == 0 || strcmp(molecule, "CO2") == 0) {
+branch  0 taken 3 (fallthrough)
+branch  1 taken 0
+branch  2 taken 1 (fallthrough)
+branch  3 taken 2
+        1:  284:        c_req = 1 * number;
+        1:  285:        o_req = 2 * number;
+        2:  286:    } else if (strcmp(molecule, "GLUCOSE") == 0) {
+branch  0 taken 1 (fallthrough)
+branch  1 taken 1
+        1:  287:        c_req = 6 * number;
+        1:  288:        h_req = 12 * number;
+        1:  289:        o_req = 6 * number;
+        1:  290:    } else if (strcmp(molecule, "ALCOHOL") == 0 || strcmp(molecule, "ETHANOL") == 0) {
+branch  0 taken 1 (fallthrough)
+branch  1 taken 0
+branch  2 taken 0 (fallthrough)
+branch  3 taken 1
+    #####:  291:        c_req = 2 * number;
+    #####:  292:        h_req = 6 * number;
+    #####:  293:        o_req = 1 * number;
+        -:  294:    } else {
+        1:  295:        snprintf(response, resp_len, "ERROR: unknown molecule '%s'\n", molecule);
+        1:  296:        return -1;
+        -:  297:    }
+        -:  298:
+        -:  299:    // Check and update inventory under file lock if applicable
+        4:  300:    if (save_file_path) {
+branch  0 taken 4 (fallthrough)
+branch  1 taken 0
+        4:  301:        int fd = open(save_file_path, O_RDWR);
+call    0 returned 4
+        4:  302:        if (fd < 0) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 4
+    #####:  303:            snprintf(response, resp_len, "ERROR: could not open inventory file\n");
+       2*:  304:            return -1;
+        -:  305:        }
+        4:  306:        if (flock(fd, LOCK_EX) != 0) {
+call    0 returned 4
+branch  1 taken 0 (fallthrough)
+branch  2 taken 4
+    #####:  307:            close(fd);
+call    0 never executed
+    #####:  308:            snprintf(response, resp_len, "ERROR: could not lock inventory file\n");
+    #####:  309:            return -1;
+        -:  310:        }
+        4:  311:        FILE *f = fdopen(fd, "r+");
+call    0 returned 4
+        4:  312:        if (!f) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 4
+    #####:  313:            flock(fd, LOCK_UN);
+call    0 never executed
+    #####:  314:            close(fd);
+call    0 never executed
+    #####:  315:            snprintf(response, resp_len, "ERROR: could not open inventory file stream\n");
+    #####:  316:            return -1;
+        -:  317:        }
+        4:  318:        rewind(f);
+call    0 returned 4
+        -:  319:        unsigned long long c, o, h;
+        4:  320:        if (fscanf(f, "%llu %llu %llu", &c, &o, &h) != 3) {
+call    0 returned 4
+branch  1 taken 0 (fallthrough)
+branch  2 taken 4
+    #####:  321:            flock(fd, LOCK_UN);
+call    0 never executed
+    #####:  322:            fclose(f);
+call    0 never executed
+    #####:  323:            snprintf(response, resp_len, "ERROR: corrupted inventory file\n");
+    #####:  324:            return -1;
+        -:  325:        }
+        -:  326:
+        4:  327:        inventory.carbon = c;
+        4:  328:        inventory.oxygen = o;
+        4:  329:        inventory.hydrogen = h;
+        -:  330:
+        4:  331:        if (inventory.carbon < c_req || inventory.oxygen < o_req || inventory.hydrogen < h_req) {
+branch  0 taken 3 (fallthrough)
+branch  1 taken 1
+branch  2 taken 2 (fallthrough)
+branch  3 taken 1
+branch  4 taken 0 (fallthrough)
+branch  5 taken 2
+        2:  332:            flock(fd, LOCK_UN);
+call    0 returned 2
+        2:  333:            fclose(f);
+call    0 returned 2
+        2:  334:            snprintf(response, resp_len, "ERROR: not enough atoms to deliver %s %llu\n", molecule, number);
+        2:  335:            return -1;
+        -:  336:        }
+        -:  337:
+        2:  338:        inventory.carbon -= c_req;
+        2:  339:        inventory.oxygen -= o_req;
+        2:  340:        inventory.hydrogen -= h_req;
+        -:  341:
+        2:  342:        rewind(f);
+call    0 returned 2
+        2:  343:        if (ftruncate(fd, 0) != 0) {
+call    0 returned 2
+branch  1 taken 0 (fallthrough)
+branch  2 taken 2
+    #####:  344:            flock(fd, LOCK_UN);
+call    0 never executed
+    #####:  345:            fclose(f);
+call    0 never executed
+    #####:  346:            snprintf(response, resp_len, "ERROR: failed truncating inventory file\n");
+    #####:  347:            return -1;
+        -:  348:        }
+        2:  349:        fprintf(f, "%llu %llu %llu\n", inventory.carbon, inventory.oxygen, inventory.hydrogen);
+call    0 returned 2
+        2:  350:        fflush(f);
+call    0 returned 2
+        -:  351:
+        2:  352:        flock(fd, LOCK_UN);
+call    0 returned 2
+        2:  353:        fclose(f);
+call    0 returned 2
+        -:  354:    } else {
+    #####:  355:        if (inventory.carbon < c_req || inventory.oxygen < o_req || inventory.hydrogen < h_req) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+branch  2 never executed (fallthrough)
+branch  3 never executed
+branch  4 never executed (fallthrough)
+branch  5 never executed
+    #####:  356:            snprintf(response, resp_len, "ERROR: not enough atoms to deliver %s %llu\n", molecule, number);
+    #####:  357:            return -1;
+        -:  358:        }
+        -:  359:
+    #####:  360:        inventory.carbon -= c_req;
+    #####:  361:        inventory.oxygen -= o_req;
+    #####:  362:        inventory.hydrogen -= h_req;
+        -:  363:    }
+        -:  364:
+        2:  365:    snprintf(response, resp_len, "OK: Delivered %s %llu\n", molecule, number);
+        2:  366:    print_inventory();
+call    0 returned 2
+        -:  367:
+        2:  368:    return 0;
+        -:  369:}
+        -:  370:
+        -:  371:/**
+        -:  372: * Processes a console command to simulate drink production.
+        -:  373: * Calculates how many drinks can be created with current inventory.
+        -:  374: *
+        -:  375: * @param cmd       The console command.
+        -:  376: * @param response  Output string with production capacity.
+        -:  377: * @param resp_len  Length of the response buffer.
+        -:  378: * @return 0 on success, -1 if the command is unknown.
+        -:  379: */
+function process_console_command called 0 returned 0% blocks executed 0%
+    #####:  380:int process_console_command(const char *cmd, char *response, size_t resp_len) {
+    #####:  381:    if (strncmp(cmd, "GEN SOFT DRINK", 14) == 0) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+    #####:  382:        unsigned long long max_water = inventory.hydrogen / 6;
+    #####:  383:        unsigned long long max_oxygen = inventory.oxygen / 3;
+    #####:  384:        unsigned long long can_make = max_water < max_oxygen ? max_water : max_oxygen;
+    #####:  385:        snprintf(response, resp_len, "Can produce %llu SOFT DRINK(s)\n", can_make);
+    #####:  386:        return 0;
+    #####:  387:    } else if (strncmp(cmd, "GEN VODKA", 9) == 0) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+    #####:  388:        unsigned long long max_c = inventory.carbon / 3;
+    #####:  389:        unsigned long long max_h = inventory.hydrogen / 6;
+    #####:  390:        unsigned long long max_o = inventory.oxygen / 3;
+    #####:  391:        unsigned long long can_make = max_c;
+    #####:  392:        if (max_h < can_make) can_make = max_h;
+branch  0 never executed (fallthrough)
+branch  1 never executed
+    #####:  393:        if (max_o < can_make) can_make = max_o;
+branch  0 never executed (fallthrough)
+branch  1 never executed
+    #####:  394:        snprintf(response, resp_len, "Can produce %llu VODKA(s)\n", can_make);
+    #####:  395:        return 0;
+    #####:  396:    } else if (strncmp(cmd, "GEN CHAMPAGNE", 12) == 0) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+    #####:  397:        unsigned long long max_c = inventory.carbon / 3;
+    #####:  398:        unsigned long long max_h = inventory.hydrogen / 8;
+    #####:  399:        unsigned long long max_o = inventory.oxygen / 4;
+    #####:  400:        unsigned long long can_make = max_c;
+    #####:  401:        if (max_h < can_make) can_make = max_h;
+branch  0 never executed (fallthrough)
+branch  1 never executed
+    #####:  402:        if (max_o < can_make) can_make = max_o;
+branch  0 never executed (fallthrough)
+branch  1 never executed
+    #####:  403:        snprintf(response, resp_len, "Can produce %llu CHAMPAGNE(s)\n", can_make);
+    #####:  404:        return 0;
+        -:  405:    }
+    #####:  406:    snprintf(response, resp_len, "ERROR: Unknown console command\n");
+    #####:  407:    return -1;
+        -:  408:}
+        -:  409:
+        -:  410:/**
+        -:  411: * Closes open TCP and UDP sockets if they are active.
+        -:  412: * Used to clean up resources on exit.
+        -:  413: */
+function cleanup called 0 returned 0% blocks executed 0%
+    #####:  414:void cleanup() {
+    #####:  415:    if (tcp_socket != -1) close(tcp_socket);
+branch  0 never executed (fallthrough)
+branch  1 never executed
+call    2 never executed
+    #####:  416:    if (udp_socket != -1) close(udp_socket);
+branch  0 never executed (fallthrough)
+branch  1 never executed
+call    2 never executed
+    #####:  417:}
+        -:  418:
+        -:  419:
+        -:  420:/**
+        -:  421: * @brief Main function that starts the TCP/UDP server, initializes inventory,
+        -:  422: * handles command-line arguments and manages client connections and requests.
+        -:  423: *
+        -:  424: * @param argc Argument count from command-line.
+        -:  425: * @param argv Argument vector from command-line.
+        -:  426: * @return int Exit status of the program (0 on success, EXIT_FAILURE on error).
+        -:  427: */
+        -:  428:
+function main called 1 returned 0% blocks executed 67%
+        1:  429:int main(int argc, char *argv[]) {
+        -:  430:    int opt;
+        1:  431:    unsigned int tcp_port = 0, udp_port = 0;
+        1:  432:    unsigned long long init_carbon=0, init_oxygen=0, init_hydrogen=0;
+        -:  433:
+        8:  434:    while ((opt = getopt(argc, argv, "T:U:o:c:h:t:f:")) != -1) {
+call    0 returned 8
+branch  1 taken 7
+branch  2 taken 1 (fallthrough)
+        7:  435:        switch(opt) {
+branch  0 taken 1
+branch  1 taken 1
+branch  2 taken 1
+branch  3 taken 1
+branch  4 taken 1
+branch  5 taken 1
+branch  6 taken 1
+branch  7 taken 0
+        1:  436:            case 'T': tcp_port = (unsigned int)atoi(optarg); break;
+        1:  437:            case 'U': udp_port = (unsigned int)atoi(optarg); break;
+        1:  438:            case 'o': init_oxygen = strtoull(optarg, NULL, 10); break;
+call    0 returned 1
+        1:  439:            case 'c': init_carbon = strtoull(optarg, NULL, 10); break;
+call    0 returned 1
+        1:  440:            case 'h': init_hydrogen = strtoull(optarg, NULL, 10); break;
+call    0 returned 1
+        1:  441:            case 't': timeout_seconds = atoi(optarg); break;
+        1:  442:            case 'f': save_file_path = strdup(optarg); break;
+    #####:  443:            default:
+    #####:  444:                fprintf(stderr, "Usage: %s -T <tcp-port> -U <udp-port> [-o oxygen] [-c carbon] [-h hydrogen] [-t timeout] [-f savefile]\n", argv[0]);
+call    0 never executed
+    #####:  445:                exit(EXIT_FAILURE);
+call    0 never executed
+        -:  446:        }
+        -:  447:    }
+        -:  448:
+        1:  449:    if (tcp_port == 0 || udp_port == 0) {
+branch  0 taken 1 (fallthrough)
+branch  1 taken 0
+branch  2 taken 0 (fallthrough)
+branch  3 taken 1
+    #####:  450:        fprintf(stderr, "Error: TCP and UDP ports must be specified with -T and -U\n");
+call    0 never executed
+    #####:  451:        exit(EXIT_FAILURE);
+call    0 never executed
+        -:  452:    }
+        -:  453:
+        1:  454:    if (save_file_path) {
+branch  0 taken 1 (fallthrough)
+branch  1 taken 0
+        1:  455:        if (access(save_file_path, F_OK) == 0) {
+call    0 returned 1
+branch  1 taken 0 (fallthrough)
+branch  2 taken 1
+    #####:  456:            if (load_inventory_from_file(save_file_path) != 0) {
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed
+    #####:  457:                fprintf(stderr, "Warning: Could not load inventory from %s, starting with initial values\n", save_file_path);
+call    0 never executed
+    #####:  458:                inventory.carbon = init_carbon;
+    #####:  459:                inventory.oxygen = init_oxygen;
+    #####:  460:                inventory.hydrogen = init_hydrogen;
+        -:  461:            } else {
+    #####:  462:                printf("Loaded inventory from %s\n", save_file_path);
+call    0 never executed
+        -:  463:            }
+        -:  464:        } else {
+        1:  465:            inventory.carbon = init_carbon;
+        1:  466:            inventory.oxygen = init_oxygen;
+        1:  467:            inventory.hydrogen = init_hydrogen;
+        1:  468:            if (save_inventory_to_file(save_file_path) != 0) {
+call    0 returned 1
+branch  1 taken 0 (fallthrough)
+branch  2 taken 1
+    #####:  469:                fprintf(stderr, "Warning: Could not create save file %s\n", save_file_path);
+call    0 never executed
+        -:  470:            }
+        -:  471:        }
+        -:  472:    } else {
+    #####:  473:        inventory.carbon = init_carbon;
+    #####:  474:        inventory.oxygen = init_oxygen;
+    #####:  475:        inventory.hydrogen = init_hydrogen;
+        -:  476:    }
+        -:  477:
+        1:  478:    print_inventory();
+call    0 returned 1
+        -:  479:
+        -:  480:    struct sockaddr_in tcp_addr, udp_addr;
+        -:  481:
+        1:  482:    tcp_socket = socket(AF_INET, SOCK_STREAM, 0);
+call    0 returned 1
+        1:  483:    if (tcp_socket < 0) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 1
+    #####:  484:        perror("TCP socket");
+call    0 never executed
+    #####:  485:        exit(EXIT_FAILURE);
+call    0 never executed
+        -:  486:    }
+        1:  487:    int optval = 1;
+        1:  488:    setsockopt(tcp_socket, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
+call    0 returned 1
+        -:  489:
+        1:  490:    memset(&tcp_addr, 0, sizeof(tcp_addr));
+        1:  491:    tcp_addr.sin_family = AF_INET;
+        1:  492:    tcp_addr.sin_addr.s_addr = INADDR_ANY;
+        1:  493:    tcp_addr.sin_port = htons(tcp_port);
+        -:  494:
+        1:  495:    if (bind(tcp_socket, (struct sockaddr*)&tcp_addr, sizeof(tcp_addr)) < 0) {
+call    0 returned 1
+branch  1 taken 0 (fallthrough)
+branch  2 taken 1
+    #####:  496:        perror("bind TCP");
+call    0 never executed
+    #####:  497:        exit(EXIT_FAILURE);
+call    0 never executed
+        -:  498:    }
+        1:  499:    if (listen(tcp_socket, MAX_CLIENTS) < 0) {
+call    0 returned 1
+branch  1 taken 0 (fallthrough)
+branch  2 taken 1
+    #####:  500:        perror("listen TCP");
+call    0 never executed
+    #####:  501:        exit(EXIT_FAILURE);
+call    0 never executed
+        -:  502:    }
+        -:  503:
+        1:  504:    udp_socket = socket(AF_INET, SOCK_DGRAM, 0);
+call    0 returned 1
+        1:  505:    if (udp_socket < 0) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 1
+    #####:  506:        perror("UDP socket");
+call    0 never executed
+    #####:  507:        exit(EXIT_FAILURE);
+call    0 never executed
+        -:  508:    }
+        1:  509:    memset(&udp_addr, 0, sizeof(udp_addr));
+        1:  510:    udp_addr.sin_family = AF_INET;
+        1:  511:    udp_addr.sin_addr.s_addr = INADDR_ANY;
+        1:  512:    udp_addr.sin_port = htons(udp_port);
+        -:  513:
+        1:  514:    if (bind(udp_socket, (struct sockaddr*)&udp_addr, sizeof(udp_addr)) < 0) {
+call    0 returned 1
+branch  1 taken 0 (fallthrough)
+branch  2 taken 1
+    #####:  515:        perror("bind UDP");
+call    0 never executed
+    #####:  516:        exit(EXIT_FAILURE);
+call    0 never executed
+        -:  517:    }
+        -:  518:
+        1:  519:    if (timeout_seconds > 0) {
+branch  0 taken 1 (fallthrough)
+branch  1 taken 0
+        1:  520:        signal(SIGALRM, alarm_handler);
+call    0 returned 1
+        1:  521:        alarm(timeout_seconds);
+call    0 returned 1
+        -:  522:    }
+        -:  523:
+        -:  524:    int clients[MAX_CLIENTS];
+       11:  525:    for (int i=0; i<MAX_CLIENTS; i++) clients[i] = -1;
+branch  0 taken 10
+branch  1 taken 1 (fallthrough)
+        -:  526:
+        -:  527:    fd_set read_fds;
+        1:  528:    int max_fd = tcp_socket > udp_socket ? tcp_socket : udp_socket;
+        1:  529:    signal(SIGINT, cleanup_and_exit);
+call    0 returned 1
+        -:  530:
+        1:  531:    printf("Server listening on TCP port %u and UDP port %u\n", tcp_port, udp_port);
+call    0 returned 1
+        -:  532:
+       15:  533:    while (1) {
+      272:  534:        FD_ZERO(&read_fds);
+branch  0 taken 256
+branch  1 taken 16 (fallthrough)
+       16:  535:        FD_SET(tcp_socket, &read_fds);
+       16:  536:        FD_SET(udp_socket, &read_fds);
+       16:  537:        FD_SET(STDIN_FILENO, &read_fds);
+      176:  538:        for (int i=0; i<MAX_CLIENTS; i++) {
+branch  0 taken 160
+branch  1 taken 16 (fallthrough)
+      160:  539:            if (clients[i] != -1) {
+branch  0 taken 7 (fallthrough)
+branch  1 taken 153
+        7:  540:                FD_SET(clients[i], &read_fds);
+        7:  541:                if (clients[i] > max_fd) max_fd = clients[i];
+branch  0 taken 1 (fallthrough)
+branch  1 taken 6
+        -:  542:            }
+        -:  543:        }
+        -:  544:
+       16:  545:        int ready = select(max_fd+1, &read_fds, NULL, NULL, NULL);
+call    0 returned 15
+       15:  546:        if (ready < 0) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 15
+    #####:  547:            if (errno == EINTR) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+    #####:  548:                if (timed_out) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+    #####:  549:                    printf("Timeout reached, exiting...\n");
+call    0 never executed
+    #####:  550:                    cleanup();
+call    0 never executed
+    #####:  551:                    exit(EXIT_SUCCESS);
+call    0 never executed
+        -:  552:                }
+    #####:  553:                continue;
+        -:  554:            }
+    #####:  555:            perror("select");
+call    0 never executed
+    #####:  556:            cleanup();
+call    0 never executed
+    #####:  557:            exit(EXIT_FAILURE);
+call    0 never executed
+        -:  558:        }
+        -:  559:
+        -:  560:        // Check for new TCP connection
+       15:  561:        if (FD_ISSET(tcp_socket, &read_fds)) {
+branch  0 taken 1 (fallthrough)
+branch  1 taken 14
+        1:  562:            int new_client = accept(tcp_socket, NULL, NULL);
+call    0 returned 1
+        1:  563:            if (new_client >= 0) {
+branch  0 taken 1 (fallthrough)
+branch  1 taken 0
+        1:  564:                int added = 0;
+       1*:  565:                for (int i=0; i<MAX_CLIENTS; i++) {
+branch  0 taken 1
+branch  1 taken 0 (fallthrough)
+        1:  566:                    if (clients[i] == -1) {
+branch  0 taken 1 (fallthrough)
+branch  1 taken 0
+        1:  567:                        clients[i] = new_client;
+        1:  568:                        added = 1;
+        1:  569:                        break;
+        -:  570:                    }
+        -:  571:                }
+        1:  572:                if (!added) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 1
+    #####:  573:                    close(new_client);
+call    0 never executed
+    #####:  574:                    printf("Max clients reached, connection refused\n");
+call    0 never executed
+        -:  575:                }
+        -:  576:            }
+        -:  577:        }
+        -:  578:
+        -:  579:        // Check for data from TCP clients
+      165:  580:        for (int i=0; i<MAX_CLIENTS; i++) {
+branch  0 taken 150
+branch  1 taken 15 (fallthrough)
+      150:  581:            if (clients[i] != -1 && FD_ISSET(clients[i], &read_fds)) {
+branch  0 taken 8 (fallthrough)
+branch  1 taken 142
+branch  2 taken 7 (fallthrough)
+branch  3 taken 1
+        7:  582:                char buf[BUFFER_SIZE] = {0};
+        7:  583:                ssize_t len = recv(clients[i], buf, sizeof(buf)-1, 0);
+call    0 returned 7
+        7:  584:                if (len <= 0) {
+branch  0 taken 1 (fallthrough)
+branch  1 taken 6
+        1:  585:                    close(clients[i]);
+call    0 returned 1
+        1:  586:                    clients[i] = -1;
+        -:  587:                } else {
+        -:  588:                    char response[BUFFER_SIZE];
+        6:  589:                    if (process_tcp_command(buf, response, sizeof(response)) == 0) {
+call    0 returned 6
+branch  1 taken 3 (fallthrough)
+branch  2 taken 3
+        3:  590:                        send(clients[i], response, strlen(response), 0);
+call    0 returned 3
+        -:  591:                    } else {
+        3:  592:                        send(clients[i], response, strlen(response), 0);
+call    0 returned 3
+        -:  593:                    }
+        -:  594:                }
+        -:  595:            }
+        -:  596:        }
+        -:  597:
+        -:  598:        // Check for data from UDP clients
+       15:  599:        if (FD_ISSET(udp_socket, &read_fds)) {
+branch  0 taken 7 (fallthrough)
+branch  1 taken 8
+        7:  600:            char buf[BUFFER_SIZE] = {0};
+        -:  601:            struct sockaddr_in client_addr;
+        7:  602:            socklen_t addr_len = sizeof(client_addr);
+        7:  603:            ssize_t len = recvfrom(udp_socket, buf, sizeof(buf)-1, 0, (struct sockaddr*)&client_addr, &addr_len);
+call    0 returned 7
+        7:  604:            if (len > 0) {
+branch  0 taken 7 (fallthrough)
+branch  1 taken 0
+        -:  605:                char response[BUFFER_SIZE];
+        7:  606:                if (process_udp_command(buf, response, sizeof(response)) == 0) {
+call    0 returned 7
+branch  1 taken 2 (fallthrough)
+branch  2 taken 5
+        2:  607:                    sendto(udp_socket, response, strlen(response), 0, (struct sockaddr*)&client_addr, addr_len);
+call    0 returned 2
+        -:  608:                } else {
+        5:  609:                    sendto(udp_socket, response, strlen(response), 0, (struct sockaddr*)&client_addr, addr_len);
+call    0 returned 5
+        -:  610:                }
+        -:  611:            }
+        -:  612:        }
+        -:  613:
+        -:  614:        // Check for input from console
+       15:  615:        if (FD_ISSET(STDIN_FILENO, &read_fds)) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 15
+    #####:  616:            char buf[BUFFER_SIZE] = {0};
+    #####:  617:            if (fgets(buf, sizeof(buf), stdin) != NULL) {
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed
+    #####:  618:                buf[strcspn(buf, "\r\n")] = 0;  // הסרת תו newline
+        -:  619:                char response[BUFFER_SIZE];
+    #####:  620:                if (process_console_command(buf, response, sizeof(response)) == 0) {
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed
+    #####:  621:                    printf("%s", response);
+call    0 never executed
+        -:  622:                } else {
+    #####:  623:                    printf("%s", response);
+call    0 never executed
+        -:  624:                }
+        -:  625:            }
+        -:  626:        }
+        -:  627:    }
+        -:  628:
+        -:  629:    cleanup();
+        -:  630:    return 0;
+        -:  631:}
