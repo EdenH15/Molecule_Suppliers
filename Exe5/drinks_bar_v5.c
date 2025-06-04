@@ -1,7 +1,5 @@
 //
 // Created by eden on 6/3/25.
-//
-// Created by eden on 6/3/25
 
 #include <stdio.h>
 #include <stdlib.h>

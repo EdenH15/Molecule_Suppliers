@@ -14,12 +14,18 @@
 
 uint64_t hydrogen = 0, oxygen = 0, carbon = 0;
 
-// Print current inventory of atoms
+/**
+ * @brief Prints the current inventory of atoms (hydrogen, oxygen, carbon).
+ */
 void print_inventory() {
     printf("Inventory => HYDROGEN: %lu, OXYGEN: %lu, CARBON: %lu\n", hydrogen, oxygen, carbon);
 }
 
-// Parse and handle ADD command to increase atom counts
+/**
+ * @brief Parses and handles an ADD command, updating atom inventory accordingly.
+ *
+ * @param cmd The received command string, expected format: "ADD <ATOM_TYPE> <AMOUNT>"
+ */
 void handle_add_command(const char *cmd) {
     char type[16];
     uint64_t amount;
@@ -32,21 +38,30 @@ void handle_add_command(const char *cmd) {
     } else {
         printf("ERROR: Invalid ADD command '%s'\n", cmd);
     }
+
     print_inventory();
 }
 
-// Process DELIVER command and try to deliver molecules
-// Returns 1 if successful, 0 if insufficient atoms, -1 if invalid, -2 if unknown molecule
+/**
+ * @brief Processes a DELIVER command and attempts to create and deliver the requested molecule(s).
+ *
+ * @param cmd The command string, expected format: "DELIVER <MOLECULE_NAME> <AMOUNT>"
+ * @return int
+ *         1 - Successfully delivered molecules.
+ *         0 - Insufficient atoms in inventory.
+ *        -1 - Invalid command format or amount.
+ *        -2 - Unknown molecule name.
+ */
 int deliver_molecules(const char *cmd) {
     char mol1[16], mol2[16];
     char mol[32];
     int amount;
 
-    // Try parsing two-word molecule name
+    // Try parsing a two-word molecule
     if (sscanf(cmd, "DELIVER %15s %15s %d", mol1, mol2, &amount) == 3) {
         snprintf(mol, sizeof(mol), "%s %s", mol1, mol2);
     }
-    // Try parsing single-word molecule name
+    // Try parsing a single-word molecule
     else if (sscanf(cmd, "DELIVER %15s %d", mol1, &amount) == 2) {
         strncpy(mol, mol1, sizeof(mol));
     } else {
@@ -57,7 +72,7 @@ int deliver_molecules(const char *cmd) {
 
     uint64_t need_H = 0, need_O = 0, need_C = 0;
 
-    // Define molecule atom requirements
+    // Define requirements for known molecules
     if (strcasecmp(mol, "WATER") == 0) {
         need_H = 2 * amount;
         need_O = 1 * amount;
@@ -76,24 +91,31 @@ int deliver_molecules(const char *cmd) {
         return -2; // Unknown molecule
     }
 
-    // Check if inventory suffices and deliver if possible
+    // Check if inventory is sufficient
     if (hydrogen >= need_H && oxygen >= need_O && carbon >= need_C) {
         hydrogen -= need_H;
         oxygen -= need_O;
         carbon -= need_C;
         print_inventory();
-        return 1; // Delivered successfully
+        return 1; // Delivery successful
     } else {
         return 0; // Insufficient atoms
     }
 }
 
-// Main server loop: handle TCP connections and UDP requests
+/**
+ * @brief Main function that starts a server to handle TCP and UDP communications
+ *        for adding atoms and delivering molecules.
+ *
+ * @param argc Number of command-line arguments.
+ * @param argv Command-line arguments. Expected format: -p <port>
+ * @return int Exit status.
+ */
 int main(int argc, char *argv[]) {
     int opt;
     int port = -1;
 
-    // Parse command-line options for port number
+    // Parse port argument
     while ((opt = getopt(argc, argv, "p:")) != -1) {
         switch (opt) {
             case 'p':
@@ -124,24 +146,24 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    // Enable address reuse on TCP socket
+    // Allow address reuse
     int optval = 1;
     setsockopt(tcp_fd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
 
-    // Prepare server address struct
+    // Setup server address struct
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = INADDR_ANY;
     server_addr.sin_port = htons(port);
 
-    // Bind both sockets to the same port
+    // Bind sockets to the port
     if (bind(tcp_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0 ||
         bind(udp_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
         perror("bind");
         exit(EXIT_FAILURE);
     }
 
-    // Listen for incoming TCP connections
+    // Start listening on TCP socket
     if (listen(tcp_fd, 5) < 0) {
         perror("listen");
         exit(EXIT_FAILURE);
@@ -149,20 +171,21 @@ int main(int argc, char *argv[]) {
 
     printf("molecule_supplier server started on port %d\n", port);
 
+    // Main server loop
     while (1) {
         FD_ZERO(&readfds);
         FD_SET(tcp_fd, &readfds);
         FD_SET(udp_fd, &readfds);
         int max_sd = (tcp_fd > udp_fd) ? tcp_fd : udp_fd;
 
-        // Add active client sockets to the read set
+        // Add client sockets to the read set
         for (int i = 0; i < MAX_CLIENTS; i++) {
             int sd = client_sockets[i];
             if (sd > 0) FD_SET(sd, &readfds);
             if (sd > max_sd) max_sd = sd;
         }
 
-        // Set 10-second timeout for select()
+        // Set 10-second timeout
         struct timeval timeout = {10, 0};
 
         int activity = select(max_sd + 1, &readfds, NULL, NULL, &timeout);
@@ -171,12 +194,11 @@ int main(int argc, char *argv[]) {
             perror("select");
             continue;
         } else if (activity == 0) {
-            // Timeout with no activity
             printf("select timeout, no activity for 10 seconds\n");
             continue;
         }
 
-        // Handle new TCP connections
+        // Handle new TCP connection
         if (FD_ISSET(tcp_fd, &readfds)) {
             int new_socket = accept(tcp_fd, (struct sockaddr *)&client_addr, &addrlen);
             if (new_socket < 0) {
@@ -192,7 +214,7 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        // Handle data from connected TCP clients
+        // Handle TCP client messages
         for (int i = 0; i < MAX_CLIENTS; i++) {
             int sd = client_sockets[i];
             if (sd > 0 && FD_ISSET(sd, &readfds)) {
@@ -208,7 +230,7 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        // Handle incoming UDP requests
+        // Handle UDP requests
         if (FD_ISSET(udp_fd, &readfds)) {
             int len = recvfrom(udp_fd, buffer, BUFFER_SIZE - 1, 0,
                                (struct sockaddr *)&client_addr, &addrlen);
