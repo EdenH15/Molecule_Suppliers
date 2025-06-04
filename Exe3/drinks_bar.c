@@ -149,6 +149,8 @@ int main(int argc, char *argv[]) {
     uint64_t oxygen = 0, carbon = 0, hydrogen = 0;
     int timeout = 10;  // default timeout
     int tcp_port = -1, udp_port = -1;
+    int timeout_seconds = 0;
+
 
     static struct option long_options[] = {
         {"oxygen", required_argument, 0, 'o'},
