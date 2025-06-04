@@ -19,6 +19,7 @@ extern uint64_t oxygen;
 extern uint64_t carbon;
 
 void print_inventory();
+void cleanup_and_exit(int sig);
 
 void handle_add_command(const char *cmd);
 

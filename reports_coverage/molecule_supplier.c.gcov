@@ -1,0 +1,412 @@
+        -:    0:Source:molecule_supplier.c
+        -:    0:Graph:molecule_supplier.gcno
+        -:    0:Data:molecule_supplier.gcda
+        -:    0:Runs:1
+        -:    1:#include <stdio.h>
+        -:    2:#include <stdlib.h>
+        -:    3:#include <string.h>
+        -:    4:#include <unistd.h>
+        -:    5:#include <stdint.h>
+        -:    6:#include <netinet/in.h>
+        -:    7:#include <sys/socket.h>
+        -:    8:#include <sys/select.h>
+        -:    9:#include <arpa/inet.h>
+        -:   10:#include <strings.h>
+        -:   11:#include <signal.h>
+        -:   12:#include <bits/getopt_core.h>
+        -:   13:
+        -:   14:#define MAX_CLIENTS 30
+        -:   15:#define BUFFER_SIZE 1024
+        -:   16:
+        -:   17:uint64_t hydrogen = 0, oxygen = 0, carbon = 0;
+        -:   18:int server_fd;
+        -:   19:int client_sockets[MAX_CLIENTS] = {0};
+        -:   20:
+        -:   21:/**
+        -:   22: * @brief Prints the current inventory of atoms (hydrogen, oxygen, carbon).
+        -:   23: */
+function print_inventory called 11 returned 100% blocks executed 100%
+       11:   24:void print_inventory() {
+       11:   25:    printf("Inventory => HYDROGEN: %lu, OXYGEN: %lu, CARBON: %lu\n", hydrogen, oxygen, carbon);
+call    0 returned 11
+       11:   26:}
+        -:   27:
+function cleanup_and_exit called 1 returned 0% blocks executed 78%
+        1:   28:void cleanup_and_exit(int sig) {
+       31:   29:    for (int i = 0; i < MAX_CLIENTS; i++) {
+branch  0 taken 30
+branch  1 taken 1 (fallthrough)
+       30:   30:        if (client_sockets[i] > 0)
+branch  0 taken 0 (fallthrough)
+branch  1 taken 30
+    #####:   31:            close(client_sockets[i]);
+call    0 never executed
+        -:   32:    }
+        1:   33:    if (server_fd > 0)
+branch  0 taken 0 (fallthrough)
+branch  1 taken 1
+    #####:   34:        close(server_fd);
+call    0 never executed
+        1:   35:    printf("\nServer exiting cleanly.\n");
+call    0 returned 1
+        1:   36:    exit(0);
+        -:   37:}
+        -:   38:
+        -:   39:/**
+        -:   40: * @brief Parses and handles an ADD command, updating atom inventory accordingly.
+        -:   41: *
+        -:   42: * @param cmd The received command string, expected format: "ADD <ATOM_TYPE> <AMOUNT>"
+        -:   43: */
+function handle_add_command called 9 returned 100% blocks executed 100%
+        9:   44:void handle_add_command(const char *cmd) {
+        -:   45:    char type[16];
+        -:   46:    uint64_t amount;
+        -:   47:
+        9:   48:    if (sscanf(cmd, "ADD %15s %lu", type, &amount) == 2) {
+branch  0 taken 4 (fallthrough)
+branch  1 taken 5
+        4:   49:        if (strcasecmp(type, "HYDROGEN") == 0) hydrogen += amount;
+branch  0 taken 1 (fallthrough)
+branch  1 taken 3
+        3:   50:        else if (strcasecmp(type, "OXYGEN") == 0) oxygen += amount;
+branch  0 taken 1 (fallthrough)
+branch  1 taken 2
+        2:   51:        else if (strcasecmp(type, "CARBON") == 0) carbon += amount;
+branch  0 taken 1 (fallthrough)
+branch  1 taken 1
+        1:   52:        else printf("ERROR: Unknown atom type '%s'\n", type);
+call    0 returned 1
+        -:   53:    } else {
+        5:   54:        printf("ERROR: Invalid ADD command '%s'\n", cmd);
+call    0 returned 5
+        -:   55:    }
+        -:   56:
+        9:   57:    print_inventory();
+call    0 returned 9
+        9:   58:}
+        -:   59:
+        -:   60:/**
+        -:   61: * @brief Processes a DELIVER command and attempts to create and deliver the requested molecule(s).
+        -:   62: *
+        -:   63: * @param cmd The command string, expected format: "DELIVER <MOLECULE_NAME> <AMOUNT>"
+        -:   64: * @return int
+        -:   65: *         1 - Successfully delivered molecules.
+        -:   66: *         0 - Insufficient atoms in inventory.
+        -:   67: *        -1 - Invalid command format or amount.
+        -:   68: *        -2 - Unknown molecule name.
+        -:   69: */
+function deliver_molecules called 7 returned 100% blocks executed 83%
+        7:   70:int deliver_molecules(const char *cmd) {
+        -:   71:    char mol1[16], mol2[16];
+        -:   72:    char mol[32];
+        -:   73:    int amount;
+        -:   74:
+        -:   75:    // Try parsing a two-word molecule
+        7:   76:    if (sscanf(cmd, "DELIVER %15s %15s %d", mol1, mol2, &amount) == 3) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 7
+    #####:   77:        snprintf(mol, sizeof(mol), "%s %s", mol1, mol2);
+        -:   78:    }
+        -:   79:    // Try parsing a single-word molecule
+        7:   80:    else if (sscanf(cmd, "DELIVER %15s %d", mol1, &amount) == 2) {
+branch  0 taken 4 (fallthrough)
+branch  1 taken 3
+        4:   81:        strncpy(mol, mol1, sizeof(mol));
+        -:   82:    } else {
+        3:   83:        return -1; // Failed to parse command
+        -:   84:    }
+        -:   85:
+       4*:   86:    if (amount <= 0) return -1; // Invalid amount
+branch  0 taken 0 (fallthrough)
+branch  1 taken 4
+        -:   87:
+        4:   88:    uint64_t need_H = 0, need_O = 0, need_C = 0;
+        -:   89:
+        -:   90:    // Define requirements for known molecules
+        4:   91:    if (strcasecmp(mol, "WATER") == 0) {
+branch  0 taken 2 (fallthrough)
+branch  1 taken 2
+        2:   92:        need_H = 2 * amount;
+        2:   93:        need_O = 1 * amount;
+        2:   94:    } else if (strcasecmp(mol, "CARBON DIOXIDE") == 0) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 2
+    #####:   95:        need_C = 1 * amount;
+    #####:   96:        need_O = 2 * amount;
+        2:   97:    } else if (strcasecmp(mol, "GLUCOSE") == 0) {
+branch  0 taken 1 (fallthrough)
+branch  1 taken 1
+        1:   98:        need_C = 6 * amount;
+        1:   99:        need_H = 12 * amount;
+        1:  100:        need_O = 6 * amount;
+        1:  101:    } else if (strcasecmp(mol, "ALCOHOL") == 0) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 1
+    #####:  102:        need_C = 2 * amount;
+    #####:  103:        need_H = 6 * amount;
+    #####:  104:        need_O = 1 * amount;
+        -:  105:    } else {
+        1:  106:        return -2; // Unknown molecule
+        -:  107:    }
+        -:  108:
+        -:  109:    // Check if inventory is sufficient
+        3:  110:    if (hydrogen >= need_H && oxygen >= need_O && carbon >= need_C) {
+branch  0 taken 2 (fallthrough)
+branch  1 taken 1
+branch  2 taken 2 (fallthrough)
+branch  3 taken 0
+branch  4 taken 2 (fallthrough)
+branch  5 taken 0
+        2:  111:        hydrogen -= need_H;
+        2:  112:        oxygen -= need_O;
+        2:  113:        carbon -= need_C;
+        2:  114:        print_inventory();
+call    0 returned 2
+        2:  115:        return 1; // Delivery successful
+        -:  116:    } else {
+        1:  117:        return 0; // Insufficient atoms
+        -:  118:    }
+        -:  119:}
+        -:  120:
+        -:  121:/**
+        -:  122: * @brief Main function that starts a server to handle TCP and UDP communications
+        -:  123: *        for adding atoms and delivering molecules.
+        -:  124: *
+        -:  125: * @param argc Number of command-line arguments.
+        -:  126: * @param argv Command-line arguments. Expected format: -p <port>
+        -:  127: * @return int Exit status.
+        -:  128: */
+function main called 1 returned 0% blocks executed 82%
+        1:  129:int main(int argc, char *argv[]) {
+        -:  130:  
+        -:  131:    int opt;
+        1:  132:    int port = -1;
+        -:  133:
+        -:  134:    // Parse port argument
+        2:  135:    while ((opt = getopt(argc, argv, "p:")) != -1) {
+call    0 returned 2
+branch  1 taken 1
+branch  2 taken 1 (fallthrough)
+        1:  136:        switch (opt) {
+branch  0 taken 1 (fallthrough)
+branch  1 taken 0
+        1:  137:            case 'p':
+        1:  138:                port = atoi(optarg);
+        1:  139:                break;
+    #####:  140:            default:
+    #####:  141:                fprintf(stderr, "Usage: %s -p <port>\n", argv[0]);
+call    0 never executed
+    #####:  142:                exit(EXIT_FAILURE);
+call    0 never executed
+        -:  143:        }
+        -:  144:    }
+        -:  145:
+        1:  146:    if (port == -1) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 1
+    #####:  147:        fprintf(stderr, "Port not specified\n");
+call    0 never executed
+    #####:  148:        exit(EXIT_FAILURE);
+call    0 never executed
+        -:  149:    }
+        -:  150:
+        -:  151:    int tcp_fd, udp_fd;
+        -:  152:    struct sockaddr_in server_addr, client_addr;
+        1:  153:    socklen_t addrlen = sizeof(client_addr);
+        -:  154:    fd_set readfds;
+        -:  155:    char buffer[BUFFER_SIZE];
+        -:  156:
+        -:  157:    // Create TCP and UDP sockets
+        1:  158:    tcp_fd = socket(AF_INET, SOCK_STREAM, 0);
+call    0 returned 1
+        1:  159:    udp_fd = socket(AF_INET, SOCK_DGRAM, 0);
+call    0 returned 1
+        1:  160:    if (tcp_fd < 0 || udp_fd < 0) {
+branch  0 taken 1 (fallthrough)
+branch  1 taken 0
+branch  2 taken 0 (fallthrough)
+branch  3 taken 1
+    #####:  161:        perror("socket");
+call    0 never executed
+    #####:  162:        exit(EXIT_FAILURE);
+call    0 never executed
+        -:  163:    }
+        -:  164:
+        -:  165:    // Allow address reuse
+        1:  166:    int optval = 1;
+        1:  167:    setsockopt(tcp_fd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
+call    0 returned 1
+        -:  168:
+        -:  169:    // Setup server address struct
+        1:  170:    memset(&server_addr, 0, sizeof(server_addr));
+        1:  171:    server_addr.sin_family = AF_INET;
+        1:  172:    server_addr.sin_addr.s_addr = INADDR_ANY;
+        1:  173:    server_addr.sin_port = htons(port);
+        -:  174:
+        -:  175:    // Bind sockets to the port
+        2:  176:    if (bind(tcp_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0 ||
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0
+branch  3 taken 0 (fallthrough)
+branch  4 taken 1
+        1:  177:        bind(udp_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+call    0 returned 1
+    #####:  178:        perror("bind");
+call    0 never executed
+    #####:  179:        exit(EXIT_FAILURE);
+call    0 never executed
+        -:  180:    }
+        -:  181:
+        -:  182:    // Start listening on TCP socket
+        1:  183:    if (listen(tcp_fd, 5) < 0) {
+call    0 returned 1
+branch  1 taken 0 (fallthrough)
+branch  2 taken 1
+    #####:  184:        perror("listen");
+call    0 never executed
+    #####:  185:        exit(EXIT_FAILURE);
+call    0 never executed
+        -:  186:    }
+        1:  187:    signal(SIGINT, cleanup_and_exit);
+call    0 returned 1
+        -:  188:
+        1:  189:    printf("molecule_supplier server started on port %d\n", port);
+call    0 returned 1
+        -:  190:
+        -:  191:    // Main server loop
+       30:  192:    while (1) {
+      527:  193:        FD_ZERO(&readfds);
+branch  0 taken 496
+branch  1 taken 31 (fallthrough)
+       31:  194:        FD_SET(tcp_fd, &readfds);
+       31:  195:        FD_SET(udp_fd, &readfds);
+       31:  196:        int max_sd = (tcp_fd > udp_fd) ? tcp_fd : udp_fd;
+        -:  197:
+        -:  198:        // Add client sockets to the read set
+      961:  199:        for (int i = 0; i < MAX_CLIENTS; i++) {
+branch  0 taken 930
+branch  1 taken 31 (fallthrough)
+      930:  200:            int sd = client_sockets[i];
+      930:  201:            if (sd > 0) FD_SET(sd, &readfds);
+branch  0 taken 15 (fallthrough)
+branch  1 taken 915
+      930:  202:            if (sd > max_sd) max_sd = sd;
+branch  0 taken 15 (fallthrough)
+branch  1 taken 915
+        -:  203:        }
+        -:  204:
+        -:  205:        // Set 10-second timeout
+       31:  206:        struct timeval timeout = {10, 0};
+        -:  207:
+       31:  208:        int activity = select(max_sd + 1, &readfds, NULL, NULL, &timeout);
+call    0 returned 30
+        -:  209:
+      30*:  210:        if (activity < 0) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 30
+    #####:  211:            perror("select");
+call    0 never executed
+      12*:  212:            continue;
+       30:  213:        } else if (activity == 0) {
+branch  0 taken 12 (fallthrough)
+branch  1 taken 18
+       12:  214:            printf("select timeout, no activity for 10 seconds\n");
+call    0 returned 12
+       12:  215:            continue;
+        -:  216:        }
+        -:  217:
+        -:  218:        // Handle new TCP connection
+       18:  219:        if (FD_ISSET(tcp_fd, &readfds)) {
+branch  0 taken 1 (fallthrough)
+branch  1 taken 17
+        1:  220:            int new_socket = accept(tcp_fd, (struct sockaddr *)&client_addr, &addrlen);
+call    0 returned 1
+       1*:  221:            if (new_socket < 0) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 1
+    #####:  222:                perror("accept");
+call    0 never executed
+    #####:  223:                continue;
+        -:  224:            }
+        1:  225:            printf("New TCP connection from %s:%d\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+call    0 returned 1
+call    1 returned 1
+       1*:  226:            for (int i = 0; i < MAX_CLIENTS; i++) {
+branch  0 taken 1
+branch  1 taken 0 (fallthrough)
+        1:  227:                if (client_sockets[i] == 0) {
+branch  0 taken 1 (fallthrough)
+branch  1 taken 0
+        1:  228:                    client_sockets[i] = new_socket;
+        1:  229:                    break;
+        -:  230:                }
+        -:  231:            }
+        -:  232:        }
+        -:  233:
+        -:  234:        // Handle TCP client messages
+      558:  235:        for (int i = 0; i < MAX_CLIENTS; i++) {
+branch  0 taken 540
+branch  1 taken 18 (fallthrough)
+      540:  236:            int sd = client_sockets[i];
+      540:  237:            if (sd > 0 && FD_ISSET(sd, &readfds)) {
+branch  0 taken 11 (fallthrough)
+branch  1 taken 529
+branch  2 taken 10 (fallthrough)
+branch  3 taken 1
+       10:  238:                int valread = read(sd, buffer, BUFFER_SIZE - 1);
+call    0 returned 10
+       10:  239:                if (valread <= 0) {
+branch  0 taken 1 (fallthrough)
+branch  1 taken 9
+        1:  240:                    close(sd);
+call    0 returned 1
+        1:  241:                    client_sockets[i] = 0;
+        1:  242:                    printf("TCP client disconnected\n");
+call    0 returned 1
+        -:  243:                } else {
+        9:  244:                    buffer[valread] = '\0';
+        9:  245:                    handle_add_command(buffer);
+call    0 returned 9
+        -:  246:                }
+        -:  247:            }
+        -:  248:        }
+        -:  249:
+        -:  250:        // Handle UDP requests
+       18:  251:        if (FD_ISSET(udp_fd, &readfds)) {
+branch  0 taken 7 (fallthrough)
+branch  1 taken 11
+        7:  252:            int len = recvfrom(udp_fd, buffer, BUFFER_SIZE - 1, 0,
+call    0 returned 7
+        -:  253:                               (struct sockaddr *)&client_addr, &addrlen);
+        7:  254:            if (len > 0) {
+branch  0 taken 7 (fallthrough)
+branch  1 taken 0
+        7:  255:                buffer[len] = '\0';
+        7:  256:                int result = deliver_molecules(buffer);
+call    0 returned 7
+        -:  257:                const char *reply;
+        7:  258:                if (result == 1) reply = "DELIVERED";
+branch  0 taken 2 (fallthrough)
+branch  1 taken 5
+        5:  259:                else if (result == 0) reply = "INSUFFICIENT ATOMS";
+branch  0 taken 1 (fallthrough)
+branch  1 taken 4
+        4:  260:                else if (result == -2) reply = "UNKNOWN MOLECULE";
+branch  0 taken 1 (fallthrough)
+branch  1 taken 3
+        3:  261:                else reply = "INVALID REQUEST";
+        -:  262:
+        7:  263:                sendto(udp_fd, reply, strlen(reply), 0,
+call    0 returned 7
+        -:  264:                       (struct sockaddr *)&client_addr, addrlen);
+        7:  265:                printf("UDP request: '%s' → %s\n", buffer, reply);
+call    0 returned 7
+        -:  266:            }
+        -:  267:        }
+        -:  268:    }
+        -:  269:
+        -:  270:    close(tcp_fd);
+        -:  271:    close(udp_fd);
+        -:  272:    return 0;
+        -:  273:}

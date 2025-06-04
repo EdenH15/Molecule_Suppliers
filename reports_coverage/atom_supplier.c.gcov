@@ -1,0 +1,72 @@
+        -:    0:Source:atom_supplier.c
+        -:    0:Graph:atom_supplier.gcno
+        -:    0:Data:atom_supplier.gcda
+        -:    0:Runs:1
+        -:    1:
+        -:    2:#include <stdio.h>
+        -:    3:#include <stdlib.h>
+        -:    4:#include <string.h>
+        -:    5:#include <unistd.h>
+        -:    6:#include <sys/types.h>
+        -:    7:#include <netdb.h>
+        -:    8:#include <sys/socket.h>
+        -:    9:#include <arpa/inet.h>
+        -:   10:
+        -:   11:#define BUFFER_SIZE 1024
+        -:   12:
+        1:   13:int main(int argc, char *argv[]) {
+        1:   14:    if (argc != 3) {
+    #####:   15:        fprintf(stderr, "Usage: %s <hostname/IP> <tcp-port>\n", argv[0]);
+    #####:   16:        exit(EXIT_FAILURE);
+        -:   17:    }
+        -:   18:
+        1:   19:    const char *hostname = argv[1];
+        1:   20:    int port = atoi(argv[2]);
+        -:   21:
+        -:   22:    // Prepare connection to server
+        -:   23:    struct addrinfo hints, *res;
+        -:   24:    int sockfd;
+        -:   25:    char buffer[BUFFER_SIZE];
+        -:   26:
+        1:   27:    memset(&hints, 0, sizeof(hints));
+        1:   28:    hints.ai_family = AF_INET;       // IPv4
+        1:   29:    hints.ai_socktype = SOCK_STREAM; // TCP
+        -:   30:
+        1:   31:    if (getaddrinfo(hostname, argv[2], &hints, &res) != 0) {
+    #####:   32:        perror("getaddrinfo");
+    #####:   33:        exit(EXIT_FAILURE);
+        -:   34:    }
+        -:   35:
+        -:   36:    // Create socket
+        1:   37:    if ((sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol)) < 0) {
+    #####:   38:        perror("socket");
+    #####:   39:        freeaddrinfo(res);
+    #####:   40:        exit(EXIT_FAILURE);
+        -:   41:    }
+        -:   42:
+        -:   43:    // Connect to server
+        1:   44:    if (connect(sockfd, res->ai_addr, res->ai_addrlen) < 0) {
+    #####:   45:        perror("connect");
+    #####:   46:        close(sockfd);
+    #####:   47:        freeaddrinfo(res);
+    #####:   48:        exit(EXIT_FAILURE);
+        -:   49:    }
+        -:   50:
+        1:   51:    freeaddrinfo(res);
+        -:   52:
+        1:   53:    printf("Connected to server at %s:%d\n", hostname, port);
+        1:   54:    printf("Enter commands (e.g., ADD OXYGEN 2), Ctrl+D to quit:\n");
+        -:   55:
+        -:   56:    // Input from client 
+        6:   57:    while (fgets(buffer, sizeof(buffer), stdin) != NULL) {
+        -:   58:        // Send to server
+        5:   59:        if (send(sockfd, buffer, strlen(buffer), 0) < 0) {
+    #####:   60:            perror("send");
+    #####:   61:            break;
+        -:   62:        }
+        -:   63:    }
+        -:   64:
+        1:   65:    printf("Disconnected.\n");
+        1:   66:    close(sockfd);
+        1:   67:    return 0;
+        -:   68:}

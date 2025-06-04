@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 void print_inventory();
+void cleanup_and_exit(int sig);
 void handle_add_command(const char *cmd);
 int deliver_molecules(const char *cmd);
 void handle_console_command(const char *cmd);

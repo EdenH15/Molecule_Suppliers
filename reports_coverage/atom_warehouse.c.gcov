@@ -1,0 +1,193 @@
+        -:    0:Source:atom_warehouse.c
+        -:    0:Graph:atom_warehouse.gcno
+        -:    0:Data:atom_warehouse.gcda
+        -:    0:Runs:1
+        -:    1:#include <stdio.h>
+        -:    2:#include <stdlib.h>
+        -:    3:#include <string.h>
+        -:    4:#include <unistd.h>
+        -:    5:#include <netinet/in.h>
+        -:    6:#include <sys/socket.h>
+        -:    7:#include <sys/select.h>
+        -:    8:#include <arpa/inet.h>
+        -:    9:#include <signal.h>
+        -:   10:#include <ctype.h>
+        -:   11:#include <getopt.h>
+        -:   12:
+        -:   13:#define MAX_CLIENTS 30
+        -:   14:#define BUFFER_SIZE 1024
+        -:   15:
+        -:   16:volatile sig_atomic_t timeout_flag = 0;
+        -:   17:int server_fd;
+        -:   18:int client_sockets[MAX_CLIENTS] = {0};
+        -:   19:
+        -:   20:
+    #####:   21:void alarm_handler(int sig) {
+        -:   22:    (void)sig;
+    #####:   23:    timeout_flag = 1;
+    #####:   24:}
+        -:   25:
+        1:   26:void cleanup_and_exit(int sig) {
+       31:   27:    for (int i = 0; i < MAX_CLIENTS; i++) {
+       30:   28:        if (client_sockets[i] > 0)
+    #####:   29:            close(client_sockets[i]);
+        -:   30:    }
+        1:   31:    if (server_fd > 0)
+        1:   32:        close(server_fd);
+        1:   33:    printf("\nServer exiting cleanly.\n");
+        1:   34:    exit(0);
+        -:   35:}
+        -:   36:
+        -:   37:unsigned int hydrogen = 0;
+        -:   38:unsigned int oxygen = 0;
+        -:   39:unsigned int carbon = 0;
+        -:   40:
+        5:   41:void handle_command(const char *cmd) {
+        -:   42:    char type[16];
+        -:   43:    unsigned int amount;
+        -:   44:
+        5:   45:    if (sscanf(cmd, "ADD %15s %u", type, &amount) == 2) {
+        -:   46:        // make type uppercase for case-insensitive comparison
+       30:   47:        for (int i = 0; type[i]; i++) type[i] = toupper(type[i]);
+        -:   48:
+        4:   49:        if (strcmp(type, "HYDROGEN") == 0) {
+        1:   50:            hydrogen += amount;
+        3:   51:        } else if (strcmp(type, "OXYGEN") == 0) {
+        2:   52:            oxygen += amount;
+        1:   53:        } else if (strcmp(type, "CARBON") == 0) {
+        1:   54:            carbon += amount;
+        -:   55:        } else {
+    #####:   56:            printf("ERROR: Unknown atom type '%s'\n", type);
+       1*:   57:            return;
+        -:   58:        }
+        -:   59:    } else {
+        1:   60:        printf("ERROR: Invalid command '%s'\n", cmd);
+        1:   61:        return;
+        -:   62:    }
+        -:   63:
+        4:   64:    printf("Inventory => HYDROGEN: %u, OXYGEN: %u, CARBON: %u\n", hydrogen, oxygen, carbon);
+        -:   65:}
+        -:   66:
+        1:   67:int main(int argc, char *argv[]) {
+        1:   68:   signal(SIGINT, cleanup_and_exit);
+        -:   69:    int opt;
+        1:   70:    int port = 0;
+        -:   71:
+        2:   72:    while ((opt = getopt(argc, argv, "p:")) != -1) {
+        1:   73:        switch (opt) {
+        1:   74:            case 'p':
+        1:   75:                port = atoi(optarg);
+        1:   76:                break;
+    #####:   77:            default:
+    #####:   78:                fprintf(stderr, "Usage: %s -p <port>\n", argv[0]);
+    #####:   79:                exit(EXIT_FAILURE);
+        -:   80:        }
+        -:   81:    }
+        -:   82:
+        1:   83:    if (port <= 0) {
+    #####:   84:        fprintf(stderr, "Port must be specified and > 0\nUsage: %s -p <port>\n", argv[0]);
+    #####:   85:        exit(EXIT_FAILURE);
+        -:   86:    }
+        -:   87:
+        1:   88:    signal(SIGALRM, alarm_handler);
+        -:   89:
+        -:   90:    int new_socket;
+        -:   91:    struct sockaddr_in address;
+        1:   92:    int addrlen = sizeof(address);
+        -:   93:    fd_set readfds;
+        -:   94:    char buffer[BUFFER_SIZE];
+        -:   95:
+        -:   96:    // Create socket
+        1:   97:    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
+    #####:   98:        perror("socket failed");
+    #####:   99:        exit(EXIT_FAILURE);
+        -:  100:    }
+        -:  101:
+        -:  102:    // Define address
+        1:  103:    address.sin_family = AF_INET;
+        1:  104:    address.sin_addr.s_addr = INADDR_ANY;
+        1:  105:    address.sin_port = htons(port);
+        -:  106:
+        -:  107:    // Bind
+        1:  108:    if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
+    #####:  109:        perror("bind failed");
+    #####:  110:        exit(EXIT_FAILURE);
+        -:  111:    }
+        -:  112:
+        -:  113:    // Listen
+        1:  114:    if (listen(server_fd, 3) < 0) {
+    #####:  115:        perror("listen");
+    #####:  116:        exit(EXIT_FAILURE);
+        -:  117:    }
+        -:  118:
+        1:  119:    printf("atom_warehouse server started on port %d\n", port);
+        -:  120:
+        7:  121:    while (1) {
+      136:  122:        FD_ZERO(&readfds);
+        8:  123:        FD_SET(server_fd, &readfds);
+        8:  124:        int max_sd = server_fd;
+        -:  125:
+      248:  126:        for (int i = 0; i < MAX_CLIENTS; i++) {
+      240:  127:            int sd = client_sockets[i];
+      240:  128:            if (sd > 0)
+        6:  129:                FD_SET(sd, &readfds);
+      240:  130:            if (sd > max_sd)
+        6:  131:                max_sd = sd;
+        -:  132:        }
+        -:  133:
+        -:  134:        // Timeout for select (10 seconds)
+        -:  135:        struct timeval tv;
+        8:  136:        tv.tv_sec = 10;
+        8:  137:        tv.tv_usec = 0;
+        -:  138:
+        8:  139:        timeout_flag = 0;
+        8:  140:        alarm(10); // set alarm for 10 sec
+        -:  141:
+        8:  142:        int activity = select(max_sd + 1, &readfds, NULL, NULL, &tv);
+        -:  143:
+        7:  144:        alarm(0); // cancel alarm if select returns early
+        -:  145:
+       7*:  146:        if (activity < 0 && !timeout_flag) {
+    #####:  147:            perror("select error");
+    #####:  148:            exit(EXIT_FAILURE);
+        -:  149:        }
+        -:  150:
+       7*:  151:        if (timeout_flag) {
+        -:  152:            // timeout happened
+    #####:  153:            printf("select timeout, no activity for 10 seconds\n");
+    #####:  154:            continue;
+        -:  155:        }
+        -:  156:
+        7:  157:        if (FD_ISSET(server_fd, &readfds)) {
+        1:  158:            if ((new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t *)&addrlen)) < 0) {
+    #####:  159:                perror("accept");
+    #####:  160:                exit(EXIT_FAILURE);
+        -:  161:            }
+        1:  162:            printf("New connection from %s:%d\n", inet_ntoa(address.sin_addr), ntohs(address.sin_port));
+        -:  163:
+       1*:  164:            for (int i = 0; i < MAX_CLIENTS; i++) {
+        1:  165:                if (client_sockets[i] == 0) {
+        1:  166:                    client_sockets[i] = new_socket;
+        1:  167:                    break;
+        -:  168:                }
+        -:  169:            }
+        -:  170:        }
+        -:  171:
+      217:  172:        for (int i = 0; i < MAX_CLIENTS; i++) {
+      210:  173:            int sd = client_sockets[i];
+      210:  174:            if (sd > 0 && FD_ISSET(sd, &readfds)) {
+        6:  175:                int valread = read(sd, buffer, BUFFER_SIZE - 1);
+        6:  176:                if (valread == 0) {
+        1:  177:                    close(sd);
+        1:  178:                    client_sockets[i] = 0;
+        1:  179:                    printf("Client disconnected.\n");
+        5:  180:                } else if (valread > 0) {
+        5:  181:                    buffer[valread] = '\0';
+        5:  182:                    handle_command(buffer);
+        -:  183:                }
+        -:  184:            }
+        -:  185:        }
+        -:  186:    }
+        -:  187:
+        -:  188:    return 0;
+        -:  189:}

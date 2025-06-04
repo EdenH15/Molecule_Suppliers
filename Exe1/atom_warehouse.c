@@ -14,10 +14,24 @@
 #define BUFFER_SIZE 1024
 
 volatile sig_atomic_t timeout_flag = 0;
+int server_fd;
+int client_sockets[MAX_CLIENTS] = {0};
+
 
 void alarm_handler(int sig) {
     (void)sig;
     timeout_flag = 1;
+}
+
+void cleanup_and_exit(int sig) {
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (client_sockets[i] > 0)
+            close(client_sockets[i]);
+    }
+    if (server_fd > 0)
+        close(server_fd);
+    printf("\nServer exiting cleanly.\n");
+    exit(0);
 }
 
 unsigned int hydrogen = 0;
@@ -51,6 +65,7 @@ void handle_command(const char *cmd) {
 }
 
 int main(int argc, char *argv[]) {
+   signal(SIGINT, cleanup_and_exit);
     int opt;
     int port = 0;
 
@@ -72,7 +87,7 @@ int main(int argc, char *argv[]) {
 
     signal(SIGALRM, alarm_handler);
 
-    int server_fd, new_socket, client_sockets[MAX_CLIENTS] = {0};
+    int new_socket;
     struct sockaddr_in address;
     int addrlen = sizeof(address);
     fd_set readfds;

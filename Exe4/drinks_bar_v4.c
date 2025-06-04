@@ -22,6 +22,9 @@
 
 // Global atom inventory
 uint64_t hydrogen = 0, oxygen = 0, carbon = 0;
+int server_fd;
+int client_sockets[MAX_CLIENTS] = {0};
+
 
 // Default timeout
 int timeout_seconds = 60;
@@ -32,6 +35,17 @@ int timeout_seconds = 60;
 void print_inventory() {
     printf("Inventory => HYDROGEN: %lu, OXYGEN: %lu, CARBON: %lu\n", hydrogen, oxygen, carbon);
     fflush(stdout);
+}
+
+void cleanup_and_exit(int sig) {
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (client_sockets[i] > 0)
+            close(client_sockets[i]);
+    }
+    if (server_fd > 0)
+        close(server_fd);
+    printf("\nServer exiting cleanly.\n");
+    exit(0);
 }
 
 /**
@@ -228,8 +242,9 @@ int main(int argc, char *argv[]) {
     }
 
     signal(SIGALRM, timeout_handler);
+    signal(SIGINT, cleanup_and_exit);
 
-    int tcp_fd, udp_fd, client_sockets[MAX_CLIENTS] = {0};
+    int tcp_fd, udp_fd;
     struct sockaddr_in server_addr, client_addr;
     socklen_t addrlen = sizeof(client_addr);
     fd_set readfds;

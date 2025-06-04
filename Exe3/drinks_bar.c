@@ -21,6 +21,8 @@
 
 // Atom inventory
 uint64_t hydrogen = 0, oxygen = 0, carbon = 0;
+int server_fd;
+int client_sockets[MAX_CLIENTS] = {0};
 
 /**
  * Prints the current atom inventory.
@@ -28,6 +30,17 @@ uint64_t hydrogen = 0, oxygen = 0, carbon = 0;
 void print_inventory() {
     printf("Inventory => HYDROGEN: %lu, OXYGEN: %lu, CARBON: %lu\n", hydrogen, oxygen, carbon);
     fflush(stdout);
+}
+
+void cleanup_and_exit(int sig) {
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (client_sockets[i] > 0)
+            close(client_sockets[i]);
+    }
+    if (server_fd > 0)
+        close(server_fd);
+    printf("\nServer exiting cleanly.\n");
+    exit(0);
 }
 
 /**
@@ -146,62 +159,32 @@ void timeout_handler(int sig) {
 }
 
 int main(int argc, char *argv[]) {
-    uint64_t oxygen = 0, carbon = 0, hydrogen = 0;
     int timeout = 10;  // default timeout
-    int tcp_port = -1, udp_port = -1;
     int timeout_seconds = 0;
-
-
-    static struct option long_options[] = {
-        {"oxygen", required_argument, 0, 'o'},
-        {"carbon", required_argument, 0, 'c'},
-        {"hydrogen", required_argument, 0, 'h'},
-        {"timeout", required_argument, 0, 't'},
-        {"tcp-port", required_argument, 0, 'T'},
-        {"udp-port", required_argument, 0, 'U'},
-        {0, 0, 0, 0}
-    };
-
+    int port = -1;
     int opt;
-    int option_index = 0;
 
-    while ((opt = getopt_long(argc, argv, "o:c:h:t:T:U:", long_options, &option_index)) != -1) {
+
+     // Parse port argument
+    while ((opt = getopt(argc, argv, "p:")) != -1) {
         switch (opt) {
-            case 'o':
-                oxygen = strtoull(optarg, NULL, 10);
-                break;
-            case 'c':
-                carbon = strtoull(optarg, NULL, 10);
-                break;
-            case 'h':
-                hydrogen = strtoull(optarg, NULL, 10);
-                break;
-            case 't':
-                timeout = atoi(optarg);
-                break;
-            case 'T':
-                tcp_port = atoi(optarg);
-                break;
-            case 'U':
-                udp_port = atoi(optarg);
+            case 'p':
+                port = atoi(optarg);
                 break;
             default:
-                fprintf(stderr, "Usage: %s -T <tcp-port> -U <udp-port> [-o oxygen] [-c carbon] [-h hydrogen] [-t timeout]\n", argv[0]);
+                fprintf(stderr, "Usage: %s -p <port>\n", argv[0]);
                 exit(EXIT_FAILURE);
         }
     }
 
-    if (tcp_port <= 0 || udp_port <= 0) {
-        fprintf(stderr, "Error: TCP and UDP ports must be specified and > 0\n");
+    if (port == -1) {
+        fprintf(stderr, "Port not specified\n");
         exit(EXIT_FAILURE);
     }
 
-    printf("Starting drinks_bar server with atoms: O=%lu, C=%lu, H=%lu\n", oxygen, carbon, hydrogen);
-    printf("TCP port: %d, UDP port: %d, Timeout: %d seconds\n", tcp_port, udp_port, timeout_seconds);
-
     signal(SIGALRM, timeout_handler);
 
-    int tcp_fd, udp_fd, client_sockets[MAX_CLIENTS] = {0};
+    int tcp_fd, udp_fd;
     struct sockaddr_in tcp_addr, udp_addr, client_addr;
     socklen_t addrlen = sizeof(client_addr);
     fd_set readfds;
@@ -221,12 +204,12 @@ int main(int argc, char *argv[]) {
     memset(&tcp_addr, 0, sizeof(tcp_addr));
     tcp_addr.sin_family = AF_INET;
     tcp_addr.sin_addr.s_addr = INADDR_ANY;
-    tcp_addr.sin_port = htons(tcp_port);
+    tcp_addr.sin_port = htons(port);
 
     memset(&udp_addr, 0, sizeof(udp_addr));
     udp_addr.sin_family = AF_INET;
     udp_addr.sin_addr.s_addr = INADDR_ANY;
-    udp_addr.sin_port = htons(udp_port);
+    udp_addr.sin_port = htons(port);
 
     if (bind(tcp_fd, (struct sockaddr *)&tcp_addr, sizeof(tcp_addr)) < 0) {
         perror("bind TCP");
@@ -241,8 +224,9 @@ int main(int argc, char *argv[]) {
         perror("listen");
         exit(EXIT_FAILURE);
     }
+    printf("drinks_bar server started on port %d\n", port);
 
-    printf("drinks_bar server started on TCP port %d and UDP port %d\n", tcp_port, udp_port);
+    signal(SIGINT, cleanup_and_exit);
 
     while (1) {
         if (timeout_seconds > 0) {

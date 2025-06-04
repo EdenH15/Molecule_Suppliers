@@ -1,13 +1,23 @@
 CC = gcc
-CFLAGS = -Wall
+CFLAGS = -Wall -fprofile-arcs -ftest-coverage
+LDFLAGS = -lgcov
 
-all: atom_warehouse atom_supplier
+SRC = atom_warehouse.c atom_supplier.c
+BIN = atom_warehouse atom_supplier
+
+all: $(BIN)
 
 atom_warehouse: atom_warehouse.c
-	$(CC) $(CFLAGS) -o atom_warehouse atom_warehouse.c
+	$(CC) $(CFLAGS) atom_warehouse.c -o atom_warehouse $(LDFLAGS)
 
 atom_supplier: atom_supplier.c
-	$(CC) $(CFLAGS) -o atom_supplier atom_supplier.c
+	$(CC) $(CFLAGS) atom_supplier.c -o atom_supplier $(LDFLAGS)
+
+coverage: $(BIN)
+	@for file in $(SRC); do \
+		echo "Running gcov on $$file..."; \
+		gcov $$file; \
+	done
 
 clean:
-	rm -f atom_warehouse atom_supplier
+	rm -f $(BIN) *.gcda *.gcno *.gcov *.out

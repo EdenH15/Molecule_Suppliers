@@ -8,17 +8,31 @@
 #include <sys/select.h>
 #include <arpa/inet.h>
 #include <strings.h>
+#include <signal.h>
 
 #define MAX_CLIENTS 30
 #define BUFFER_SIZE 1024
 
 uint64_t hydrogen = 0, oxygen = 0, carbon = 0;
+int server_fd;
+int client_sockets[MAX_CLIENTS] = {0};
 
 /**
  * @brief Prints the current inventory of atoms (hydrogen, oxygen, carbon).
  */
 void print_inventory() {
     printf("Inventory => HYDROGEN: %lu, OXYGEN: %lu, CARBON: %lu\n", hydrogen, oxygen, carbon);
+}
+
+void cleanup_and_exit(int sig) {
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (client_sockets[i] > 0)
+            close(client_sockets[i]);
+    }
+    if (server_fd > 0)
+        close(server_fd);
+    printf("\nServer exiting cleanly.\n");
+    exit(0);
 }
 
 /**
@@ -112,6 +126,7 @@ int deliver_molecules(const char *cmd) {
  * @return int Exit status.
  */
 int main(int argc, char *argv[]) {
+
     int opt;
     int port = -1;
 
@@ -132,7 +147,7 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    int tcp_fd, udp_fd, client_sockets[MAX_CLIENTS] = {0};
+    int tcp_fd, udp_fd;
     struct sockaddr_in server_addr, client_addr;
     socklen_t addrlen = sizeof(client_addr);
     fd_set readfds;
@@ -168,6 +183,7 @@ int main(int argc, char *argv[]) {
         perror("listen");
         exit(EXIT_FAILURE);
     }
+    signal(SIGINT, cleanup_and_exit);
 
     printf("molecule_supplier server started on port %d\n", port);
 

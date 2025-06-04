@@ -28,6 +28,9 @@ char *uds_stream_path = NULL;
 char *uds_dgram_path = NULL;
 int uds_stream_fd = -1;
 int uds_dgram_fd = -1;
+int server_fd;
+int client_sockets[MAX_CLIENTS] = {0};
+
 
 /**
  * Prints current atom inventory to stdout.
@@ -35,6 +38,17 @@ int uds_dgram_fd = -1;
 void print_inventory() {
     printf("Inventory => HYDROGEN: %lu, OXYGEN: %lu, CARBON: %lu\n", hydrogen, oxygen, carbon);
     fflush(stdout);
+}
+
+void cleanup_and_exit(int sig) {
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (client_sockets[i] > 0)
+            close(client_sockets[i]);
+    }
+    if (server_fd > 0)
+        close(server_fd);
+    printf("\nServer exiting cleanly.\n");
+    exit(0);
 }
 
 /**
@@ -204,7 +218,7 @@ int main(int argc, char *argv[]) {
 
     signal(SIGALRM, timeout_handler);
 
-    int tcp_fd = -1, udp_fd = -1, client_sockets[MAX_CLIENTS] = {0};
+    int tcp_fd = -1, udp_fd = -1;
     struct sockaddr_in server_addr, client_addr;
     struct sockaddr_un uds_stream_addr, uds_dgram_addr;
     socklen_t addrlen = sizeof(client_addr);
@@ -253,6 +267,7 @@ int main(int argc, char *argv[]) {
 
     printf("drinks_bar server started\n");
     print_inventory();
+    signal(SIGINT, cleanup_and_exit);
 
     while (1) {
         alarm(timeout_seconds);
