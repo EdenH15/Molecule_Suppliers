@@ -9,6 +9,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <signal.h>
+#include "drinks_bar_v6.h"
 
 #define MAX_CLIENTS 10
 #define BUFFER_SIZE 1024
@@ -24,22 +25,32 @@ int timed_out = 0;
 int timeout_seconds = 0;
 char *save_file_path = NULL;
 
-// פונקציית הדפסת המלאי (לדוגמה)
+/**
+ * Prints the current inventory to stdout.
+ */
 void print_inventory() {
     printf("Inventory => CARBON: %llu, OXYGEN: %llu, HYDROGEN: %llu\n",
            inventory.carbon, inventory.oxygen, inventory.hydrogen);
 }
 
+/**
+ * Alarm signal handler. Sets the timed_out flag.
+ */
 void alarm_handler(int sig) {
     (void)sig;
     timed_out = 1;
 }
 
+/**
+ * Loads the inventory from a file using a shared (read) lock.
+ * @param filename Path to the file containing the inventory.
+ * @return 0 on success, -1 on failure.
+ */
 int load_inventory_from_file(const char *filename) {
     int fd = open(filename, O_RDONLY);
     if (fd < 0) return -1;
 
-    // נעילה לקריאה (shared lock)
+    // Acquire shared lock for reading
     if (flock(fd, LOCK_SH) != 0) {
         close(fd);
         return -1;
@@ -68,17 +79,22 @@ int load_inventory_from_file(const char *filename) {
     return 0;
 }
 
+/**
+ * Saves the current inventory to a file using an exclusive (write) lock.
+ * @param filename Path to the file where inventory will be saved.
+ * @return 0 on success, -1 on failure.
+ */
 int save_inventory_to_file(const char *filename) {
     int fd = open(filename, O_WRONLY | O_CREAT, 0666);
     if (fd < 0) return -1;
 
-    // נעילה לכתיבה (exclusive lock)
+    // Acquire exclusive lock for writing
     if (flock(fd, LOCK_EX) != 0) {
         close(fd);
         return -1;
     }
 
-    // כתיבה לקובץ - כדי למנוע נתונים ישנים נשארים, נעשה truncate
+    // Truncate file before writing new data
     if (ftruncate(fd, 0) != 0) {
         flock(fd, LOCK_UN);
         close(fd);
@@ -93,13 +109,21 @@ int save_inventory_to_file(const char *filename) {
     }
 
     fprintf(f, "%llu %llu %llu\n", inventory.carbon, inventory.oxygen, inventory.hydrogen);
-    fflush(f); // לוודא הכל נכתב לדיסק
+    fflush(f); // Ensure data is written to disk
 
     flock(fd, LOCK_UN);
     fclose(f);
     return 0;
 }
 
+/**
+ * Processes a TCP command string of the form "ADD <ATOM> <NUMBER>".
+ * Updates the inventory accordingly.
+ * @param cmd The command received from the client.
+ * @param response The response buffer to write result into.
+ * @param resp_len The maximum length of the response buffer.
+ * @return 0 on success, -1 on error.
+ */
 int process_tcp_command(const char *cmd, char *response, size_t resp_len) {
     char action[16];
     char atom[16];
@@ -120,9 +144,9 @@ int process_tcp_command(const char *cmd, char *response, size_t resp_len) {
         return -1;
     }
 
-    // נעילה ושחרור בעת שינוי מלאי כדי לשמור עקביות בין שרתים
+    // Ensure inventory consistency between concurrent servers using locking
     if (save_file_path) {
-        // טען קודם עם LOCK_SH ואז קבל LOCK_EX כדי לעדכן את המלאי בצורה בטוחה
+        // Acquire exclusive lock for reading and updating the inventory file
         int fd = open(save_file_path, O_RDWR);
         if (fd < 0) {
             snprintf(response, resp_len, "ERROR: could not open inventory file\n");
@@ -134,7 +158,6 @@ int process_tcp_command(const char *cmd, char *response, size_t resp_len) {
             return -1;
         }
 
-        // קרא את המלאי מהקובץ לפני השינוי
         FILE *f = fdopen(fd, "r+");
         if (!f) {
             flock(fd, LOCK_UN);
@@ -142,6 +165,7 @@ int process_tcp_command(const char *cmd, char *response, size_t resp_len) {
             snprintf(response, resp_len, "ERROR: could not open inventory file stream\n");
             return -1;
         }
+
         rewind(f);
         unsigned long long c, o, h;
         if (fscanf(f, "%llu %llu %llu", &c, &o, &h) != 3) {
@@ -155,7 +179,7 @@ int process_tcp_command(const char *cmd, char *response, size_t resp_len) {
         inventory.oxygen = o;
         inventory.hydrogen = h;
 
-        // עכשיו בצע את העדכון במלאי
+        // Update inventory based on atom type
         if (strcmp(atom, "CARBON") == 0) {
             inventory.carbon += number;
         } else if (strcmp(atom, "OXYGEN") == 0) {
@@ -169,7 +193,7 @@ int process_tcp_command(const char *cmd, char *response, size_t resp_len) {
             return -1;
         }
 
-        // כתיבה מחדש למלאי בקובץ
+        // Overwrite updated inventory to file
         rewind(f);
         if (ftruncate(fd, 0) != 0) {
             flock(fd, LOCK_UN);
@@ -177,13 +201,14 @@ int process_tcp_command(const char *cmd, char *response, size_t resp_len) {
             snprintf(response, resp_len, "ERROR: failed truncating inventory file\n");
             return -1;
         }
+
         fprintf(f, "%llu %llu %llu\n", inventory.carbon, inventory.oxygen, inventory.hydrogen);
         fflush(f);
 
         flock(fd, LOCK_UN);
         fclose(f);
     } else {
-        // אם אין קובץ שמור, עדכן ישירות בזיכרון
+        // Update in-memory inventory if no file is used
         if (strcmp(atom, "CARBON") == 0) {
             inventory.carbon += number;
         } else if (strcmp(atom, "OXYGEN") == 0) {
@@ -202,6 +227,17 @@ int process_tcp_command(const char *cmd, char *response, size_t resp_len) {
     return 0;
 }
 
+
+/**
+ * Processes a UDP command that requests molecule delivery.
+ * Supports known molecules like WATER, CO2, GLUCOSE, etc.
+ * Updates the inventory after checking if there are enough atoms.
+ *
+ * @param cmd       The incoming command string.
+ * @param response  Output buffer for the server's response.
+ * @param resp_len  Maximum length of the response buffer.
+ * @return 0 on success, -1 on error with a message in response.
+ */
 int process_udp_command(const char *cmd, char *response, size_t resp_len) {
     char action[16];
     char molecule[32];
@@ -224,27 +260,28 @@ int process_udp_command(const char *cmd, char *response, size_t resp_len) {
 
     unsigned long long c_req=0, o_req=0, h_req=0;
 
+    // Determine atom requirements per molecule
     if (strcmp(molecule, "WATER") == 0) {
-        h_req = 2*number;
-        o_req = 1*number;
+        h_req = 2 * number;
+        o_req = 1 * number;
     } else if (strcmp(molecule, "CARBON") == 0 || strcmp(molecule, "CARBONDIOXIDE") == 0 ||
                strcmp(molecule, "CARBON_DIOXIDE") == 0 || strcmp(molecule, "CO2") == 0) {
-        c_req = 1*number;
-        o_req = 2*number;
+        c_req = 1 * number;
+        o_req = 2 * number;
     } else if (strcmp(molecule, "GLUCOSE") == 0) {
-        c_req = 6*number;
-        h_req = 12*number;
-        o_req = 6*number;
+        c_req = 6 * number;
+        h_req = 12 * number;
+        o_req = 6 * number;
     } else if (strcmp(molecule, "ALCOHOL") == 0 || strcmp(molecule, "ETHANOL") == 0) {
-        c_req = 2*number;
-        h_req = 6*number;
-        o_req = 1*number;
+        c_req = 2 * number;
+        h_req = 6 * number;
+        o_req = 1 * number;
     } else {
         snprintf(response, resp_len, "ERROR: unknown molecule '%s'\n", molecule);
         return -1;
     }
 
-    // בדיקה ועדכון המלאי תחת נעילה כמו ב-TCP
+    // Check and update inventory under file lock if applicable
     if (save_file_path) {
         int fd = open(save_file_path, O_RDWR);
         if (fd < 0) {
@@ -316,6 +353,15 @@ int process_udp_command(const char *cmd, char *response, size_t resp_len) {
     return 0;
 }
 
+/**
+ * Processes a console command to simulate drink production.
+ * Calculates how many drinks can be created with current inventory.
+ *
+ * @param cmd       The console command.
+ * @param response  Output string with production capacity.
+ * @param resp_len  Length of the response buffer.
+ * @return 0 on success, -1 if the command is unknown.
+ */
 int process_console_command(const char *cmd, char *response, size_t resp_len) {
     if (strncmp(cmd, "GEN SOFT DRINK", 14) == 0) {
         unsigned long long max_water = inventory.hydrogen / 6;
@@ -346,10 +392,24 @@ int process_console_command(const char *cmd, char *response, size_t resp_len) {
     return -1;
 }
 
+/**
+ * Closes open TCP and UDP sockets if they are active.
+ * Used to clean up resources on exit.
+ */
 void cleanup() {
     if (tcp_socket != -1) close(tcp_socket);
     if (udp_socket != -1) close(udp_socket);
 }
+
+
+/**
+ * @brief Main function that starts the TCP/UDP server, initializes inventory,
+ * handles command-line arguments and manages client connections and requests.
+ *
+ * @param argc Argument count from command-line.
+ * @param argv Argument vector from command-line.
+ * @return int Exit status of the program (0 on success, EXIT_FAILURE on error).
+ */
 
 int main(int argc, char *argv[]) {
     int opt;
@@ -481,7 +541,7 @@ int main(int argc, char *argv[]) {
             exit(EXIT_FAILURE);
         }
 
-        // בדיקת חיבור TCP חדש
+        // Check for new TCP connection
         if (FD_ISSET(tcp_socket, &read_fds)) {
             int new_client = accept(tcp_socket, NULL, NULL);
             if (new_client >= 0) {
@@ -500,7 +560,7 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        // בדיקת נתונים מלקוחות TCP
+        // Check for data from TCP clients
         for (int i=0; i<MAX_CLIENTS; i++) {
             if (clients[i] != -1 && FD_ISSET(clients[i], &read_fds)) {
                 char buf[BUFFER_SIZE] = {0};
@@ -519,7 +579,7 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        // בדיקת נתונים מ-UDP
+        // Check for data from UDP clients
         if (FD_ISSET(udp_socket, &read_fds)) {
             char buf[BUFFER_SIZE] = {0};
             struct sockaddr_in client_addr;
@@ -535,7 +595,7 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        // בדיקת קלט מהקונסולה
+        // Check for input from console
         if (FD_ISSET(STDIN_FILENO, &read_fds)) {
             char buf[BUFFER_SIZE] = {0};
             if (fgets(buf, sizeof(buf), stdin) != NULL) {
