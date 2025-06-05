@@ -25,8 +25,8 @@ int main(int argc, char *argv[]) {
     char buffer[BUFFER_SIZE];
 
     memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET;       // IPv4
-    hints.ai_socktype = SOCK_STREAM; // TCP
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
 
     if (getaddrinfo(hostname, argv[2], &hints, &res) != 0) {
         perror("getaddrinfo");

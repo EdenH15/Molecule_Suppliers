@@ -2,8 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <fcntl.h>      // For flock
-#include <sys/file.h>   // For flock
+#include <fcntl.h>
+#include <sys/file.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -35,6 +35,12 @@ void print_inventory() {
            inventory.carbon, inventory.oxygen, inventory.hydrogen);
 }
 
+/**
+ * @brief Cleans up resources and exits the server gracefully.
+ * Closes all active client sockets and the server socket.
+ *
+ * @param sig The signal number that triggered the handler.
+ */
 void cleanup_and_exit(int sig) {
     for (int i = 0; i < MAX_CLIENTS; i++) {
         if (client_sockets[i] > 0)
@@ -379,31 +385,51 @@ int process_console_command(const char *cmd, char *response, size_t resp_len) {
     if (strncmp(cmd, "GEN SOFT DRINK", 14) == 0) {
         unsigned long long max_water = inventory.hydrogen / 6;
         unsigned long long max_oxygen = inventory.oxygen / 3;
-        unsigned long long can_make = max_water < max_oxygen ? max_water : max_oxygen;
+        unsigned long long can_make;
+
+        if (max_water < max_oxygen)
+            can_make = max_water;
+        else
+            can_make = max_oxygen;
+
         snprintf(response, resp_len, "Can produce %llu SOFT DRINK(s)\n", can_make);
         return 0;
-    } else if (strncmp(cmd, "GEN VODKA", 9) == 0) {
+    }
+
+    else if (strncmp(cmd, "GEN VODKA", 9) == 0) {
         unsigned long long max_c = inventory.carbon / 3;
         unsigned long long max_h = inventory.hydrogen / 6;
         unsigned long long max_o = inventory.oxygen / 3;
         unsigned long long can_make = max_c;
-        if (max_h < can_make) can_make = max_h;
-        if (max_o < can_make) can_make = max_o;
+
+        if (max_h < can_make)
+            can_make = max_h;
+        if (max_o < can_make)
+            can_make = max_o;
+
         snprintf(response, resp_len, "Can produce %llu VODKA(s)\n", can_make);
         return 0;
-    } else if (strncmp(cmd, "GEN CHAMPAGNE", 12) == 0) {
+    }
+
+    else if (strncmp(cmd, "GEN CHAMPAGNE", 12) == 0) {
         unsigned long long max_c = inventory.carbon / 3;
         unsigned long long max_h = inventory.hydrogen / 8;
         unsigned long long max_o = inventory.oxygen / 4;
         unsigned long long can_make = max_c;
-        if (max_h < can_make) can_make = max_h;
-        if (max_o < can_make) can_make = max_o;
+
+        if (max_h < can_make)
+            can_make = max_h;
+        if (max_o < can_make)
+            can_make = max_o;
+
         snprintf(response, resp_len, "Can produce %llu CHAMPAGNE(s)\n", can_make);
         return 0;
     }
+
     snprintf(response, resp_len, "ERROR: Unknown console command\n");
     return -1;
 }
+
 
 /**
  * Closes open TCP and UDP sockets if they are active.

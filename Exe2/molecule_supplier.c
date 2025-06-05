@@ -24,6 +24,12 @@ void print_inventory() {
     printf("Inventory => HYDROGEN: %lu, OXYGEN: %lu, CARBON: %lu\n", hydrogen, oxygen, carbon);
 }
 
+/**
+ * @brief Cleans up resources and exits the server gracefully.
+ * Closes all active client sockets and the server socket.
+ *
+ * @param sig The signal number that triggered the handler.
+ */
 void cleanup_and_exit(int sig) {
     for (int i = 0; i < MAX_CLIENTS; i++) {
         if (client_sockets[i] > 0)
@@ -119,7 +125,7 @@ int deliver_molecules(const char *cmd) {
 
 /**
  * @brief Main function that starts a server to handle TCP and UDP communications
- *        for adding atoms and delivering molecules.
+ * for adding atoms and delivering molecules.
  *
  * @param argc Number of command-line arguments.
  * @param argv Command-line arguments. Expected format: -p <port>
@@ -192,7 +198,12 @@ int main(int argc, char *argv[]) {
         FD_ZERO(&readfds);
         FD_SET(tcp_fd, &readfds);
         FD_SET(udp_fd, &readfds);
-        int max_sd = (tcp_fd > udp_fd) ? tcp_fd : udp_fd;
+        int max_sd;
+		if (tcp_fd > udp_fd){
+    		max_sd = tcp_fd;}
+		else{
+    		max_sd = udp_fd;}
+
 
         // Add client sockets to the read set
         for (int i = 0; i < MAX_CLIENTS; i++) {

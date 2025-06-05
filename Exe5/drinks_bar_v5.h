@@ -13,7 +13,6 @@
 // Maximum number of TCP clients
 #define MAX_CLIENTS 30
 
-// Atom inventory (shared between functions)
 extern uint64_t hydrogen;
 extern uint64_t oxygen;
 extern uint64_t carbon;

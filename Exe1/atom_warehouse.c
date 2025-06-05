@@ -9,20 +9,34 @@
 #include <signal.h>
 #include <ctype.h>
 #include <getopt.h>
+#include "atom_warehouse.h"
 
-#define MAX_CLIENTS 30
-#define BUFFER_SIZE 1024
 
 volatile sig_atomic_t timeout_flag = 0;
 int server_fd;
 int client_sockets[MAX_CLIENTS] = {0};
+uint64_t hydrogen = 0;
+uint64_t oxygen = 0;
+uint64_t carbon = 0;
 
 
+/**
+ * @brief Signal handler for SIGALRM.
+ * Sets the timeout flag when an alarm signal is received.
+ *
+ * @param sig The signal number (ignored).
+ */
 void alarm_handler(int sig) {
     (void)sig;
     timeout_flag = 1;
 }
 
+/**
+ * @brief Cleans up resources and exits the server gracefully.
+ * Closes all active client sockets and the server socket.
+ *
+ * @param sig The signal number that triggered the handler.
+ */
 void cleanup_and_exit(int sig) {
     for (int i = 0; i < MAX_CLIENTS; i++) {
         if (client_sockets[i] > 0)
@@ -34,10 +48,13 @@ void cleanup_and_exit(int sig) {
     exit(0);
 }
 
-unsigned int hydrogen = 0;
-unsigned int oxygen = 0;
-unsigned int carbon = 0;
 
+/**
+ * @brief Parses and processes an add command to update atom inventory.
+ * Accepts atom types: HYDROGEN, OXYGEN, or CARBON.
+ *
+ * @param cmd The command string received from a client.
+ */
 void handle_command(const char *cmd) {
     char type[16];
     unsigned int amount;

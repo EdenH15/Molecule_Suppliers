@@ -1,5 +1,4 @@
-// drinks_bar_v4.c
-// Created by eden on 6/3/25
+
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,7 +19,7 @@
 #define MAX_CLIENTS 30
 #define BUFFER_SIZE 1024
 
-// Global atom inventory
+
 uint64_t hydrogen = 0, oxygen = 0, carbon = 0;
 int server_fd;
 int client_sockets[MAX_CLIENTS] = {0};
@@ -37,6 +36,12 @@ void print_inventory() {
     fflush(stdout);
 }
 
+/**
+ * @brief Cleans up resources and exits the server gracefully.
+ * Closes all active client sockets and the server socket.
+ *
+ * @param sig The signal number that triggered the handler.
+ */
 void cleanup_and_exit(int sig) {
     for (int i = 0; i < MAX_CLIENTS; i++) {
         if (client_sockets[i] > 0)

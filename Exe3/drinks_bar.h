@@ -1,8 +1,12 @@
-// drinks_bar.h
+
 #ifndef DRINKS_BAR_H
 #define DRINKS_BAR_H
 
 #include <stdint.h>
+
+extern uint64_t hydrogen;
+extern uint64_t oxygen;
+extern uint64_t carbon;
 
 void print_inventory();
 void cleanup_and_exit(int sig);

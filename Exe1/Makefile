@@ -7,7 +7,7 @@ BIN = atom_warehouse atom_supplier
 
 all: $(BIN)
 
-atom_warehouse: atom_warehouse.c
+atom_warehouse: atom_warehouse.c atom_warehouse.h
 	$(CC) $(CFLAGS) atom_warehouse.c -o atom_warehouse $(LDFLAGS)
 
 atom_supplier: atom_supplier.c

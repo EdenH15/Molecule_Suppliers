@@ -1,5 +1,4 @@
-// drinks_bar_v4.c
-// Created by eden on 6/3/25
+
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,7 +18,7 @@
 #define MAX_CLIENTS 30
 #define BUFFER_SIZE 1024
 
-// Atom inventory
+
 uint64_t hydrogen = 0, oxygen = 0, carbon = 0;
 int server_fd;
 int client_sockets[MAX_CLIENTS] = {0};
@@ -32,6 +31,13 @@ void print_inventory() {
     fflush(stdout);
 }
 
+
+/**
+ * @brief Cleans up resources and exits the server gracefully.
+ * Closes all active client sockets and the server socket.
+ *
+ * @param sig The signal number that triggered the handler.
+ */
 void cleanup_and_exit(int sig) {
     for (int i = 0; i < MAX_CLIENTS; i++) {
         if (client_sockets[i] > 0)
@@ -124,32 +130,80 @@ void handle_console_command(const char *cmd) {
     int soft = 0, vodka = 0, champagne = 0;
 
     if (strcasecmp(cmd, "GEN SOFT DRINK") == 0) {
-        int water = hydrogen / 2 < oxygen ? hydrogen / 2 : oxygen;
-        int co2 = carbon < oxygen / 2 ? carbon : oxygen / 2;
-        soft = water < co2 ? water : co2;
+        int water = hydrogen / 2;
+        if (oxygen < water)
+            water = oxygen;
+
+        int co2 = carbon;
+        if (oxygen / 2 < co2)
+            co2 = oxygen / 2;
+
+        if (water < co2)
+            soft = water;
+        else
+            soft = co2;
+
         printf("SOFT DRINKS that can be made: %d\n", soft);
-    } else if (strcasecmp(cmd, "GEN VODKA") == 0) {
-        int water = hydrogen / 2 < oxygen ? hydrogen / 2 : oxygen;
-        int alcohol = hydrogen / 6 < carbon / 2 ? hydrogen / 6 : carbon / 2;
-        int glucose = carbon / 6 < hydrogen / 12 && carbon / 6 < oxygen / 6 ? carbon / 6 : hydrogen / 12 < oxygen / 6 ? hydrogen / 12 : oxygen / 6;
+    }
+
+    else if (strcasecmp(cmd, "GEN VODKA") == 0) {
+        int water = hydrogen / 2;
+        if (oxygen < water)
+            water = oxygen;
+
+        int alcohol = hydrogen / 6;
+        if (carbon / 2 < alcohol)
+            alcohol = carbon / 2;
+
+        int glucose;
+        if (carbon / 6 < hydrogen / 12 && carbon / 6 < oxygen / 6)
+            glucose = carbon / 6;
+        else if (hydrogen / 12 < oxygen / 6)
+            glucose = hydrogen / 12;
+        else
+            glucose = oxygen / 6;
+
         vodka = water;
-        if (vodka > alcohol) vodka = alcohol;
-        if (vodka > glucose) vodka = glucose;
+        if (vodka > alcohol)
+            vodka = alcohol;
+        if (vodka > glucose)
+            vodka = glucose;
+
         printf("VODKA that can be made: %d\n", vodka);
-    } else if (strcasecmp(cmd, "GEN CHAMPAGNE") == 0) {
-        int water = hydrogen / 2 < oxygen ? hydrogen / 2 : oxygen;
-        int co2 = carbon < oxygen / 2 ? carbon : oxygen / 2;
-        int glucose = carbon / 6 < hydrogen / 12 && carbon / 6 < oxygen / 6 ? carbon / 6 : hydrogen / 12 < oxygen / 6 ? hydrogen / 12 : oxygen / 6;
+    }
+
+    else if (strcasecmp(cmd, "GEN CHAMPAGNE") == 0) {
+        int water = hydrogen / 2;
+        if (oxygen < water)
+            water = oxygen;
+
+        int co2 = carbon;
+        if (oxygen / 2 < co2)
+            co2 = oxygen / 2;
+
+        int glucose;
+        if (carbon / 6 < hydrogen / 12 && carbon / 6 < oxygen / 6)
+            glucose = carbon / 6;
+        else if (hydrogen / 12 < oxygen / 6)
+            glucose = hydrogen / 12;
+        else
+            glucose = oxygen / 6;
+
         champagne = water;
-        if (champagne > co2) champagne = co2;
-        if (champagne > glucose) champagne = glucose;
+        if (champagne > co2)
+            champagne = co2;
+        if (champagne > glucose)
+            champagne = glucose;
+
         printf("CHAMPAGNE that can be made: %d\n", champagne);
-    } else {
+    }
+    else {
         printf("Unknown console command: %s\n", cmd);
     }
 
     fflush(stdout);
 }
+
 
 /**
  * Signal handler for SIGALRM to interrupt select() safely.

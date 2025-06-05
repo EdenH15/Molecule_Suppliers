@@ -10,6 +10,11 @@
 
 #define BUFFER_SIZE 1024
 
+/**
+ * Prints the usage message and exits the program.
+ *
+ * @param prog The program name (usually argv[0])
+ */
 void usage(const char *prog) {
     fprintf(stderr, "Usage: %s [-h <hostname/IP> -p <port>] | [-f <UDS socket file path>]\n", prog);
     exit(EXIT_FAILURE);

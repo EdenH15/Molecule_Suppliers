@@ -1,6 +1,4 @@
-// drinks_bar_v4.h
-// Header file for drinks_bar_v4.c
-// Created by eden on 6/3/25
+
 
 #ifndef DRINKS_BAR_V4_H
 #define DRINKS_BAR_V4_H
@@ -13,7 +11,7 @@
 // Maximum number of TCP clients
 #define MAX_CLIENTS 30
 
-// Atom inventory (shared between functions)
+
 extern uint64_t hydrogen;
 extern uint64_t oxygen;
 extern uint64_t carbon;
