@@ -1,3 +1,7 @@
+#./drinks_bar -T 1234 -U 5678 -o 2 -c 3 -h 4 -t 30
+#./molecule_requester -h 127.0.0.1 -p 5678
+#./atom_supplier -h 127.0.0.1 -p 5678
+
 CC = gcc
 CFLAGS = -Wall -fprofile-arcs -ftest-coverage
 LDFLAGS = -lgcov

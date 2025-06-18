@@ -1,3 +1,8 @@
+#./drinks_bar_v6 -f atom.txt -T 1111 -U 2222
+#./drinks_bar_v6 -f atom.txt -T 1234 -U 5678
+#./atom_supplier -h 127.0.0.1 -p 1234
+#./molecule_requester -h 127.0.0.1 -p
+
 # Compiler and flags for coverage
 CC = gcc
 CFLAGS = -Wall -fprofile-arcs -ftest-coverage
